@@ -2,7 +2,7 @@ import Link from "next/link";
 import EarlyAccessForm from "./components/EarlyAccessForm";
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-white text-zinc-900">
+    <main className="min-h-screen bg-zinc-50 text-zinc-900">
       {/* Top nav */}
       <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
@@ -35,80 +35,101 @@ export default function HomePage() {
       <section className="mx-auto max-w-6xl px-6 py-14">
         <div className="grid gap-10 lg:grid-cols-2 lg:items-center">
           <div>
-            <p className="inline-flex items-center rounded-full border border-zinc-200 px-3 py-1 text-xs text-zinc-600">
-              Revenue protection for appointment businesses
-            </p>
+            
+  <p className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-600 shadow-sm">
+    Revenue protection for beauty and appointment businesses
+  </p>
 
-            <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-5xl">
-              Stop no-shows. Protect your revenue.
-            </h1>
+  <h1 className="mt-5 max-w-xl text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
+    Stop no-shows. Protect every appointment.
+  </h1>
 
-            <p className="mt-4 text-base text-zinc-600">
-              Valsentra helps microbusinesses reduce no-shows with smart deposits,
-              automated reminders, and “fill the slot” workflows.
-            </p>
+  <p className="mt-4 max-w-xl text-base leading-7 text-zinc-600">
+    Valsentra helps lash, brow, nail, and beauty studios reduce cancellations
+    with deposits, automated reminders, and slot recovery workflows.
+  </p>
 
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Link
-                href="/demo"
-                className="rounded-xl bg-black px-5 py-3 text-sm font-medium text-white"
-              >
-                Try the demo
-              </Link>
-              <a
-                href="#early-access"
-                className="rounded-xl border border-zinc-200 px-5 py-3 text-sm font-medium"
-              >
-                Get early access
-              </a>
-            </div>
+  <div className="mt-6 flex flex-wrap gap-3">
+    <Link
+      href="/demo"
+      className="rounded-xl bg-black px-5 py-3 text-sm font-medium text-white shadow-sm transition hover:opacity-90"
+    >
+      Try the demo
+    </Link>
 
-            <div className="mt-6 grid grid-cols-3 gap-3 text-xs text-zinc-600">
-              <div className="rounded-xl border border-zinc-200 p-3">
-                <div className="font-medium text-zinc-900">Deposits</div>
-                <div className="mt-1">Confirm bookings fast</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 p-3">
-                <div className="font-medium text-zinc-900">Reminders</div>
-                <div className="mt-1">WhatsApp-ready messages</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 p-3">
-                <div className="font-medium text-zinc-900">Waitlist</div>
-                <div className="mt-1">Recover cancellations</div>
-              </div>
-            </div>
-          </div>
+    <a
+      href="#early-access"
+      className="rounded-xl border border-zinc-200 bg-white px-5 py-3 text-sm font-medium text-zinc-900 shadow-sm transition hover:bg-zinc-50"
+    >
+      Get early access
+    </a>
+  </div>
+
+  <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="text-sm font-medium text-zinc-900">Deposits</div>
+      <div className="mt-1 text-sm text-zinc-600">Confirm bookings faster</div>
+    </div>
+
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="text-sm font-medium text-zinc-900">Reminders</div>
+      <div className="mt-1 text-sm text-zinc-600">WhatsApp-ready follow-ups</div>
+    </div>
+
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="text-sm font-medium text-zinc-900">Slot recovery</div>
+      <div className="mt-1 text-sm text-zinc-600">Fill cancellations fast</div>
+    </div>
+  </div>
+</div>
 
           {/* Right side “product preview” */}
-          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-6">
-            <div className="text-sm font-medium">Dashboard preview</div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <StatCard title="Pending deposits" value="2" sub="Potential loss: RM 48" />
-              <StatCard title="Revenue" value="RM 72" sub="Deposits collected" />
-              <StatCard title="No-show rate" value="12%" sub="Last 30 days" />
-              <StatCard title="High risk" value="1" sub="Send reminder now" />
-            </div>
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+  <div className="flex items-center justify-between">
+    <div>
+      <div className="text-sm font-medium text-zinc-900">Dashboard preview</div>
+      <div className="mt-1 text-xs text-zinc-500">
+        Track deposits, risk, no-shows, and revenue in one place
+      </div>
+    </div>
+    <span className="rounded-full border border-zinc-200 px-2 py-1 text-xs text-zinc-500">
+      Live preview
+    </span>
+  </div>
 
-            <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">Booking at risk</span>
-                <span className="rounded-full bg-yellow-100 px-2 py-1 text-xs text-yellow-700">
-                  Pending deposit
-                </span>
-              </div>
-              <div className="mt-2 text-xs text-zinc-600">
-                Click “Send reminder” to confirm the slot.
-              </div>
-              <div className="mt-3 flex gap-2">
-                <button className="rounded-lg bg-black px-3 py-2 text-xs text-white">
-                  Send reminder
-                </button>
-                <button className="rounded-lg border border-zinc-200 px-3 py-2 text-xs">
-                  Mark deposit paid
-                </button>
-              </div>
-            </div>
-          </div>
+  <div className="mt-5 grid grid-cols-2 gap-3">
+    <StatCard title="Pending deposits" value="2" sub="Potential loss: RM 380" />
+    <StatCard title="Revenue" value="RM 570" sub="Protected today" />
+    <StatCard title="No-show rate" value="18%" sub="Last 30 days" />
+    <StatCard title="High risk" value="1" sub="Reminder needed" />
+  </div>
+
+  <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+    <div className="flex items-center justify-between text-sm">
+      <span className="font-medium text-zinc-900">Booking at risk</span>
+      <span className="rounded-full bg-yellow-100 px-2 py-1 text-xs text-yellow-700">
+        Pending deposit
+      </span>
+    </div>
+
+    <div className="mt-3 text-sm text-zinc-700">
+      Brow Lamination · Today · 4:00 PM
+    </div>
+
+    <div className="mt-1 text-xs text-zinc-500">
+      Deposit not paid yet. Send reminder before the slot is lost.
+    </div>
+
+    <div className="mt-4 flex gap-2">
+      <button className="rounded-lg bg-black px-3 py-2 text-xs text-white">
+        Send reminder
+      </button>
+      <button className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-700">
+        Mark deposit paid
+      </button>
+    </div>
+  </div>
+</div>
         </div>
       </section>
 
@@ -254,15 +275,38 @@ export default function HomePage() {
 
       {/* Early access */}
       <section id="early-access" className="border-t border-zinc-200 bg-zinc-50">
-        <div className="mx-auto max-w-6xl px-6 py-14">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-            <h3 className="text-xl font-semibold">Get early access</h3>
-            <p className="mt-2 text-sm text-zinc-600">
-              Leave your WhatsApp number and business type. We’ll invite you to the private beta.
-            </p>
+        <div className="grid gap-6 lg:grid-cols-2">
+  <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+    <h3 className="text-xl font-semibold text-zinc-900">
+      Join the early access waitlist
+    </h3>
+    <p className="mt-2 text-sm leading-6 text-zinc-600">
+      Be one of the first beauty and appointment businesses to test Valsentra.
+      We’re building it to reduce no-shows, protect revenue, and recover lost slots.
+    </p>
 
-            <EarlyAccessForm />
-          </div>
+    <div className="mt-5 space-y-3 text-sm text-zinc-600">
+      <div className="rounded-xl border border-zinc-200 p-3">
+        ✅ Get access to the private beta
+      </div>
+      <div className="rounded-xl border border-zinc-200 p-3">
+        ✅ Try reminder + deposit workflows early
+      </div>
+      <div className="rounded-xl border border-zinc-200 p-3">
+        ✅ Help shape the product for your business
+      </div>
+    </div>
+  </div>
+
+  <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+    <h3 className="text-lg font-semibold text-zinc-900">Request early access</h3>
+    <p className="mt-2 text-sm text-zinc-600">
+      Leave your details and we’ll contact you when the beta is ready.
+    </p>
+
+    <EarlyAccessForm />
+  </div>
+
 
           <footer className="mt-10 text-xs text-zinc-500">
             © {new Date().getFullYear()} Valsentra. Built for microbusinesses.
@@ -270,7 +314,7 @@ export default function HomePage() {
         </div>
       </section>
     </main>
-  );
+ ) ;
 }
 
 function StatCard(props: { title: string; value: string; sub: string }) {

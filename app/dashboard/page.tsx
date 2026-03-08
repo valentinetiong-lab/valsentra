@@ -3,6 +3,12 @@
 import Link from "next/link";
 
 import { useEffect, useState } from "react";
+import {
+  getWaitlist,
+  addToWaitlist,
+  removeFromWaitlist,
+  type WaitlistEntry,
+} from "../store/waitlistStore";
   import {
   getBookings,
   updateBookingStatus,
@@ -14,9 +20,10 @@ import type { Booking } from "../store/bookingStore";
 export default function DashboardPage() {
     
   const [bookings, setBookings] = useState<Booking[]>([]);
-
+const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
 useEffect(() => {
   setBookings(getBookings());
+  setWaitlist(getWaitlist());
 }, []);
 
   function updateStatus(id: string, newStatus: Booking["status"]) {
@@ -92,6 +99,37 @@ function sendReminder(b: Booking) {
   const url = `https://wa.me/${msisdn}?text=${encodeURIComponent(msg)}`;
   window.open(url, "_blank");
 }
+function addDemoWaitlist() {
+  addToWaitlist({
+    customer: "Sarah",
+    phone: "0123456789",
+    service: "Brow Lamination",
+  });
+  setWaitlist(getWaitlist());
+}
+
+function fillSlotFromWaitlist(bookingId: string) {
+  if (waitlist.length === 0) {
+    alert("No one is on the waitlist yet.");
+    return;
+  }
+
+  const next = waitlist[0];
+  alert(
+    `Auto-fill triggered ✅\n\n` +
+    `Send this slot to: ${next.customer}\n` +
+    `Phone: ${next.phone}\n` +
+    `Service: ${next.service}`
+  );
+
+  removeFromWaitlist(next.id);
+  setWaitlist(getWaitlist());
+}
+
+function removeWaitlistEntry(id: string) {
+  removeFromWaitlist(id);
+  setWaitlist(getWaitlist());
+}
   return (
     <main className="min-h-screen bg-white text-zinc-900">
       <div className="mx-auto max-w-5xl px-6 py-10">
@@ -148,6 +186,52 @@ function sendReminder(b: Booking) {
     <p className="text-xs text-zinc-500">Rate: {noShowRate}%</p>
   </div>
 
+<div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+  <div className="flex items-center justify-between">
+    <div>
+      <h2 className="text-lg font-semibold text-zinc-900">Waitlist</h2>
+      <p className="mt-1 text-sm text-zinc-600">
+        Use the waitlist to recover cancelled or no-show slots.
+      </p>
+    </div>
+
+    <button
+      onClick={addDemoWaitlist}
+      className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+    >
+      Add demo waitlist entry
+    </button>
+  </div>
+
+  <div className="mt-4 space-y-3">
+    {waitlist.length === 0 ? (
+      <div className="rounded-xl border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
+        No one is on the waitlist yet.
+      </div>
+    ) : (
+      waitlist.map((w) => (
+        <div
+          key={w.id}
+          className="flex items-center justify-between rounded-xl border border-zinc-200 p-4"
+        >
+          <div>
+            <div className="font-medium text-zinc-900">{w.customer}</div>
+            <div className="text-sm text-zinc-600">
+              {w.service} · {w.phone}
+            </div>
+          </div>
+
+          <button
+            onClick={() => removeWaitlistEntry(w.id)}
+            className="text-xs text-red-600 hover:underline"
+          >
+            Remove
+          </button>
+        </div>
+      ))
+    )}
+  </div>
+</div>
 </div>
         <div className="mt-8 rounded-xl border border-zinc-200 overflow-hidden">
           <table className="w-full text-sm">
@@ -236,7 +320,14 @@ function sendReminder(b: Booking) {
       No-show
     </button>
   )}
-
+{b.status === "No-show" && (
+  <button
+    onClick={() => fillSlotFromWaitlist(b.id)}
+    className="text-blue-600 text-xs"
+  >
+    Fill slot
+  </button>
+)}
   <button
     onClick={() => removeBooking(b.id)}
     className="text-zinc-500 text-xs"
