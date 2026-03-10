@@ -11,6 +11,7 @@ import {
 } from "../store/waitlistStore";
   import {
   getBookings,
+   addBooking,
   updateBookingStatus,
   deleteBooking,
 } from "../store/bookingStore";
@@ -25,6 +26,24 @@ useEffect(() => {
   setBookings(getBookings());
   setWaitlist(getWaitlist());
 }, []);
+function sendDepositLink(b: Booking) {
+  const raw = (b.phone || "").replace(/\D/g, "");
+  const msisdn = raw.startsWith("0") ? "6" + raw : raw;
+
+  const msg =
+    `Hi ${b.customer}, to confirm your appointment for ${b.service} on ${b.date} at ${b.time}, ` +
+    `please pay a RM ${b.deposit} deposit. Payment link: https://yourpaymentlink.com Thanks!`;
+
+  const url = `https://wa.me/${msisdn}?text=${encodeURIComponent(msg)}`;
+  window.open(url, "_blank");
+}
+const [showQuickAdd, setShowQuickAdd] = useState(false);
+const [quickName, setQuickName] = useState("");
+const [quickPhone, setQuickPhone] = useState("");
+const [quickService, setQuickService] = useState("");
+const [quickDate, setQuickDate] = useState("");
+const [quickTime, setQuickTime] = useState("");
+const [quickDeposit, setQuickDeposit] = useState("30");
 
   function updateStatus(id: string, newStatus: Booking["status"]) {
   const current = bookings.find(b => b.id === id);
@@ -113,6 +132,7 @@ function fillSlotFromWaitlist(bookingId: string) {
     alert("No one is on the waitlist yet.");
     return;
   }
+ 
 
   const next = waitlist[0];
   alert(
@@ -130,6 +150,42 @@ function removeWaitlistEntry(id: string) {
   removeFromWaitlist(id);
   setWaitlist(getWaitlist());
 }
+const highRiskBookings = bookings.filter((b) => b.status === "Pending Deposit");
+const highRiskCount = highRiskBookings.length;
+const revenueProtected = bookings
+  .filter((b) => b.status === "Confirmed")
+  .reduce((sum, b) => sum + b.deposit, 0);
+  const revenueAtRisk = bookings
+  .filter((b) => b.status === "Pending Deposit")
+  .reduce((sum, b) => sum + b.deposit, 0);
+  function handleQuickAddBooking() {
+  if (!quickName || !quickPhone || !quickService || !quickDate || !quickTime) {
+    alert("Please fill in all booking fields.");
+    return;
+  }
+
+  addBooking({
+    id: crypto.randomUUID(),
+    customer: quickName,
+    phone: quickPhone,
+    service: quickService,
+    date: quickDate,
+    time: quickTime,
+    status: "Pending Deposit",
+    deposit: Number(quickDeposit),
+    reminderSent: false,
+  });
+
+  setBookings(getBookings());
+
+  setQuickName("");
+  setQuickPhone("");
+  setQuickService("");
+  setQuickDate("");
+  setQuickTime("");
+  setQuickDeposit("30");
+  setShowQuickAdd(false);
+}
   return (
     <main className="min-h-screen bg-white text-zinc-900">
       <div className="mx-auto max-w-5xl px-6 py-10">
@@ -146,7 +202,116 @@ function removeWaitlistEntry(id: string) {
           >
             View Booking Flow
           </Link>
+          <button
+  onClick={() => setShowQuickAdd(!showQuickAdd)}
+  className="rounded-lg border px-4 py-2 text-sm hover:bg-zinc-100"
+>
+  {showQuickAdd ? "Close Quick Add" : "Quick Add Booking"}
+</button>
         </div>
+{showQuickAdd && (
+  <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+    <p className="text-sm font-semibold text-zinc-900">Quick Add Booking</p>
+    <p className="mt-1 text-sm text-zinc-600">
+      Add bookings from WhatsApp, Instagram, phone calls, or walk-ins.
+    </p>
+
+    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <input
+        value={quickName}
+        onChange={(e) => setQuickName(e.target.value)}
+        placeholder="Customer name"
+        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+      />
+
+      <input
+        value={quickPhone}
+        onChange={(e) => setQuickPhone(e.target.value)}
+        placeholder="Phone number"
+        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+      />
+
+      <input
+        value={quickService}
+        onChange={(e) => setQuickService(e.target.value)}
+        placeholder="Service"
+        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+      />
+
+      <input
+        value={quickDate}
+        onChange={(e) => setQuickDate(e.target.value)}
+        placeholder="Date (e.g. 2026-03-15)"
+        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+      />
+
+      <input
+        value={quickTime}
+        onChange={(e) => setQuickTime(e.target.value)}
+        placeholder="Time (e.g. 3:00 PM)"
+        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+      />
+
+      <input
+        value={quickDeposit}
+        onChange={(e) => setQuickDeposit(e.target.value)}
+        placeholder="Deposit"
+        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+      />
+    </div>
+
+    <div className="mt-4 flex gap-3">
+      <button
+        onClick={handleQuickAddBooking}
+        className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+      >
+        Create booking
+      </button>
+
+      <button
+        onClick={() => setShowQuickAdd(false)}
+        className="rounded-lg border px-4 py-2 text-sm"
+      >
+        Cancel
+      </button>
+    </div>
+  </div>
+)}
+
+
+
+        <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
+  <p className="text-sm font-semibold text-amber-900">Risk Alert Panel</p>
+
+  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="rounded-xl bg-white p-4 shadow-sm">
+      <p className="text-xs text-zinc-500">High Risk Bookings</p>
+      <p className="text-lg font-semibold">{highRiskCount}</p>
+    </div>
+
+    <div className="rounded-xl bg-white p-4 shadow-sm">
+      <p className="text-xs text-zinc-500">Pending Deposits</p>
+      <p className="text-lg font-semibold">{pendingDepositCount}</p>
+    </div>
+
+    <div className="rounded-xl bg-white p-4 shadow-sm">
+      <p className="text-xs text-zinc-500">Potential Loss</p>
+      <p className="text-lg font-semibold">RM {pendingDepositValue}</p>
+    </div>
+
+    <div className="rounded-xl bg-white p-4 shadow-sm">
+  <p className="text-xs text-zinc-500">Revenue at Risk Today</p>
+  <p className="text-lg font-semibold text-red-600">
+    RM {revenueAtRisk}
+  </p>
+</div>
+  </div>
+
+
+</div>
+<p className="mt-8 text-sm font-semibold text-zinc-500">
+  Business Metrics
+</p>
 <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
   {/* Total */}
   <div className="p-4 border rounded-xl">
@@ -172,6 +337,18 @@ function removeWaitlistEntry(id: string) {
     <p className="text-lg font-semibold">RM {revenue}</p>
   </div>
 
+<p className="mt-8 text-sm font-semibold text-zinc-500"> 
+  Revenue Protection
+</p>
+
+{/* Revenue Protected */}
+<div className="p-4 border rounded-xl">
+  <p className="text-xs text-zinc-500">Revenue Protected</p>
+  <p className="text-lg font-semibold text-green-600">
+    RM {revenueProtected}
+  </p>
+</div>
+
   {/* Pending deposits */}
   <div className="p-4 border rounded-xl">
     <p className="text-xs text-zinc-500">Pending deposits</p>
@@ -186,12 +363,12 @@ function removeWaitlistEntry(id: string) {
     <p className="text-xs text-zinc-500">Rate: {noShowRate}%</p>
   </div>
 
-<div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+<div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
   <div className="flex items-center justify-between">
     <div>
       <h2 className="text-lg font-semibold text-zinc-900">Waitlist</h2>
       <p className="mt-1 text-sm text-zinc-600">
-        Use the waitlist to recover cancelled or no-show slots.
+        Automatically refill cancelled appointments from your waitlist.
       </p>
     </div>
 
@@ -248,7 +425,10 @@ function removeWaitlistEntry(id: string) {
             </thead>
             <tbody>
   {bookings.map((b) => (
-    <tr key={b.id} className="border-t">
+    <tr
+  key={b.id}
+  className={b.status === "Pending Deposit" ? "border-t bg-yellow-50" : "border-t"}
+>
       <td className="px-4 py-3">
         <div className="font-medium">{b.customer}</div>
         <div className="text-xs text-zinc-500">{b.phone}</div>
@@ -261,18 +441,19 @@ function removeWaitlistEntry(id: string) {
       </td>
 
       <td className="px-4 py-3">
-        <span
-          className={`px-2 py-1 rounded text-xs ${
-            b.status === "Confirmed"
-              ? "bg-green-100 text-green-700"
-              : b.status === "Pending Deposit"
-              ? "bg-yellow-100 text-yellow-700"
-              : "bg-red-100 text-red-700"
-          }`}
-        >
-          {b.status}
-        </span>
-      </td>
+  <span
+    className={
+      "rounded-full px-2 py-1 text-xs font-medium " +
+      (b.status === "Confirmed"
+        ? "bg-green-100 text-green-700"
+        : b.status === "Pending Deposit"
+        ? "bg-yellow-100 text-yellow-700"
+        : "bg-red-100 text-red-700")
+    }
+  >
+    {b.status}
+  </span>
+</td>
 <td className="px-4 py-3">
   <span
     className={`px-2 py-1 rounded text-xs ${
@@ -287,6 +468,11 @@ function removeWaitlistEntry(id: string) {
   </span>
 </td>
       <td className="px-4 py-3 space-x-2">
+        {b.status === "Pending Deposit" && (
+  <p className="mb-2 text-xs text-yellow-700">
+    Deposit due: RM {b.deposit}
+  </p>
+)}
   {b.status === "Pending Deposit" && (
     <button
       onClick={() => updateStatus(b.id, "Confirmed")}
@@ -311,7 +497,12 @@ function removeWaitlistEntry(id: string) {
       No-show
     </button>
   )}
-
+ <button
+  onClick={() => sendDepositLink(b)}
+  className="text-green-600 text-xs"
+>
+  Send Deposit Link
+</button>
   {b.status === "Confirmed" && (
     <button
       onClick={() => updateStatus(b.id, "No-show")}
@@ -321,12 +512,17 @@ function removeWaitlistEntry(id: string) {
     </button>
   )}
 {b.status === "No-show" && (
-  <button
-    onClick={() => fillSlotFromWaitlist(b.id)}
-    className="text-blue-600 text-xs"
-  >
-    Fill slot
-  </button>
+  <>
+    <p className="mb-2 text-xs text-red-600">
+      This empty slot can be offered to waitlist
+    </p>
+    <button
+      onClick={() => fillSlotFromWaitlist(b.id)}
+      className="text-blue-600 text-xs"
+    >
+      Fill from waitlist
+    </button>
+  </>
 )}
   <button
     onClick={() => removeBooking(b.id)}
