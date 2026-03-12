@@ -189,26 +189,40 @@ const revenueProtected = bookings
   return (
     <main className="min-h-screen bg-white text-zinc-900">
       <div className="mx-auto max-w-5xl px-6 py-10">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Owner Dashboard</h1>
-            <p className="mt-1 text-sm text-zinc-600">
-              Microbusiness control panel – protect revenue & reduce no-shows.
-            </p>
-          </div>
-          <Link
-            href="/demo"
-            className="rounded-lg bg-black px-4 py-2 text-sm text-white"
-          >
-            View Booking Flow
-          </Link>
-          <button
-  onClick={() => setShowQuickAdd(!showQuickAdd)}
-  className="rounded-lg border px-4 py-2 text-sm hover:bg-zinc-100"
+       
+       <div className="flex items-center justify-between flex-wrap gap-3">
+
+  <div>
+    <h1 className="text-2xl font-semibold">Owner Dashboard</h1>
+    <p className="mt-1 text-sm text-zinc-600">
+      Microbusiness control panel – protect revenue & reduce no-shows.
+    </p>
+  </div>
+
+  <div className="flex gap-3">
+    <Link
+  href="/settings"
+  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700"
 >
-  {showQuickAdd ? "Close Quick Add" : "Quick Add Booking"}
-</button>
-        </div>
+  Settings
+</Link>
+    <Link
+      href="/demo"
+      className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+    >
+      View Booking Flow
+    </Link>
+
+    <button
+      onClick={() => setShowQuickAdd(!showQuickAdd)}
+      className="rounded-lg border px-4 py-2 text-sm hover:bg-zinc-100"
+    >
+      {showQuickAdd ? "Close Quick Add" : "Quick Add Booking"}
+    </button>
+  </div>
+
+</div>
+      
 {showQuickAdd && (
   <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
     <p className="text-sm font-semibold text-zinc-900">Quick Add Booking</p>
