@@ -7,6 +7,7 @@ export type Booking = {
   time: string;
   status: "Pending Deposit" | "Confirmed" | "No-show";
   deposit: number;
+  reminderSent?: boolean;
 };
 
 const STORAGE_KEY = "valsentra_bookings";

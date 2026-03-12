@@ -19,9 +19,9 @@ type Slot = {
 };
 
 const SERVICES: Service[] = [
-  { id: "s1", name: "Consultation", durationMin: 30, price: 60 },
-  { id: "s2", name: "Standard Session", durationMin: 60, price: 120 },
-  { id: "s3", name: "Premium Session", durationMin: 90, price: 180 },
+  { id: "s1", name: "Classic Lash Set", durationMin: 30, price: 60 },
+  { id: "s2", name: "Hybrid Lash Set", durationMin: 60, price: 120 },
+  { id: "s3", name: "Volume Lash Set", durationMin: 90, price: 180 },
 ];
 
 function formatMYR(amount: number) {
@@ -61,6 +61,7 @@ export default function DemoBookingPage() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
+  const [bookingComplete, setBookingComplete] = useState(false);
 
   const service = useMemo(() => SERVICES.find(s => s.id === serviceId)!, [serviceId]);
   const slots = useMemo(() => buildSlots(dateISO), [dateISO]);
@@ -81,6 +82,7 @@ export default function DemoBookingPage() {
     setName("");
     setPhone("");
     setNotes("");
+    setBookingComplete(false);
   }
 
   return (
@@ -124,9 +126,49 @@ export default function DemoBookingPage() {
           ))}
         </div>
 
+          {bookingComplete && (
+  <div className="text-center">
+    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-green-700 text-lg font-semibold">
+  ✓
+</div>
+    <h2 className="mt-4 text-lg font-semibold">Booking request sent</h2>
+
+    <p className="mt-2 text-sm text-zinc-600">
+      Your booking request has been submitted.
+    </p>  
+
+   <p className="mt-1 text-sm text-zinc-600">
+    The business will confirm your slot after the deposit is received.
+  </p>
+
+    <div className="mt-4 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+      A deposit of {formatMYR(deposit)} is required to secure this appointment.
+    </div>
+
+    <div className="mt-6 flex items-center justify-center gap-3">
+      <button
+        onClick={() => {
+          reset();
+          router.push("/dashboard");
+        }}
+        className="rounded-lg bg-black px-4 py-2 text-sm text-white"
+      >
+        Go to dashboard
+      </button>
+
+      <button
+        onClick={reset}
+        className="rounded-lg border border-zinc-200 px-4 py-2 text-sm hover:bg-zinc-50"
+      >
+        Make another booking
+      </button>
+    </div>
+  </div>
+)}
+
         <div className="mt-6 rounded-2xl border border-zinc-200 p-6">
           {/* STEP 1 */}
-          {step === 1 && (
+         {!bookingComplete && step === 1 && (
             <div>
               <h2 className="text-lg font-semibold">Choose a service</h2>
               <p className="mt-1 text-sm text-zinc-600">
@@ -173,7 +215,7 @@ export default function DemoBookingPage() {
           )}
 
           {/* STEP 2 */}
-          {step === 2 && (
+          {!bookingComplete && step === 2 && (
             <div>
               <h2 className="text-lg font-semibold">Pick a time</h2>
               <p className="mt-1 text-sm text-zinc-600">
@@ -241,7 +283,7 @@ export default function DemoBookingPage() {
           )}
 
           {/* STEP 3 */}
-          {step === 3 && (
+          {!bookingComplete && step === 3 && (
             <div>
               <h2 className="text-lg font-semibold">Your details</h2>
               <p className="mt-1 text-sm text-zinc-600">
@@ -267,8 +309,8 @@ export default function DemoBookingPage() {
                     placeholder="e.g. 01X-XXXXXXX"
                     className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
                   />
-                  <div className="mt-1 text-xs text-zinc-500">
-                    (Later: WhatsApp/SMS confirmation + reminders)
+                 <div className="mt-1 text-xs text-zinc-500">
+                  Deposit reminders and confirmations are sent via WhatsApp.
                   </div>
                 </div>
 
@@ -288,9 +330,12 @@ export default function DemoBookingPage() {
                 <div className="text-sm font-semibold">Summary</div>
                 <div className="mt-2 text-sm text-zinc-700">
                   <div><span className="text-zinc-500">Service:</span> {service.name}</div>
-                  <div><span className="text-zinc-500">When:</span> {dateISO} {slot?.label ?? ""}</div>
+                  <div><span className="text-zinc-500">When:</span> {dateISO} • {slot?.label ?? ""}</div>
                   <div><span className="text-zinc-500">Price:</span> {formatMYR(service.price)}</div>
                   <div><span className="text-zinc-500">Deposit to confirm:</span> {formatMYR(deposit)}</div>
+                 <div className="mt-4 rounded-lg bg-yellow-50 px-4 py-3 text-sm text-yellow-800 border border-yellow-200">
+                   A deposit of {formatMYR(deposit)} is required to secure this appointment.
+                  </div>
                 </div>
               </div>
 
@@ -302,24 +347,26 @@ export default function DemoBookingPage() {
                   Back
                 </button>
 
-                <button
+               <button
   onClick={() => {
-   addBooking({
-  id: crypto.randomUUID(),
-  customer: name,
-  phone: phone,
-  service: service.name,
-  date: dateISO,
-  time: slot?.label ?? "",
-  status: "Pending Deposit",
-  deposit: deposit,
-});
+    addBooking({
+      id: crypto.randomUUID(),
+      customer: name,
+      phone: phone,
+      service: service.name,
+      date: dateISO,
+      time: slot?.label ?? "",
+      status: "Pending Deposit",
+      deposit: deposit,
+      reminderSent: false,
+    });
 
-reset();
-router.push("/dashboard");
- }}
+  setBookingComplete(true);
+  }}
+  disabled={!canConfirm}
+  className="rounded-lg bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
 >
-  Confirm booking (demo)
+  Confirm booking
 </button>
               </div>
             </div>
