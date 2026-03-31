@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import AutopilotQueuePanel from "../../components/AutopilotQueuePanel";
+import { useAutopilotStore } from "../../store/autopilotStore";
+import type { RestaurantOrder as AutopilotOrder } from "../../types/autopilot";
 
 type OrderStatus =
   | "UNPAID"
@@ -101,6 +104,46 @@ function riskBadgeClasses(level: RiskLevel) {
   return "bg-green-100 text-green-700 border-green-200";
 }
 
+function mapOrderStatusToAutopilotStatus(
+  status: OrderStatus
+): AutopilotOrder["status"] {
+  if (status === "PAID") return "Paid";
+  if (status === "CANCELLED") return "Cancelled";
+  if (status === "NO_SHOW") return "No-show";
+  return "Pending";
+}
+
+function mapOrderTypeToAutopilotType(
+  orderType: OrderType
+): AutopilotOrder["orderType"] {
+  if (orderType === "DINE_IN_RESERVATION") return "DINE_IN";
+  if (orderType === "DELIVERY_PREORDER") return "DELIVERY";
+  return "PICKUP";
+}
+
+function getAutopilotDate(value?: string) {
+  if (!value) return new Date().toISOString().slice(0, 10);
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getAutopilotTime(value?: string) {
+  if (!value) return "18:00";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "18:00";
+  }
+
+  return parsed.toTimeString().slice(0, 5);
+}
+
+
 export default function RestaurantOwnerPage() {
   const [orders, setOrders] = useState<RestaurantOrder[]>([]);
   const [audit, setAudit] = useState<AuditItem[]>([]);
@@ -108,6 +151,7 @@ export default function RestaurantOwnerPage() {
   const [waitlist, setWaitlist] = useState<WaitlistLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
+const { evaluateOrders } = useAutopilotStore();
 
   useEffect(() => {
     async function boot() {
@@ -371,6 +415,30 @@ export default function RestaurantOwnerPage() {
     );
   }, [orders]);
 
+  const autopilotOrders = useMemo<AutopilotOrder[]>(() => {
+  return orders.map((order) => ({
+    id: order.id,
+    customerName: order.customerName,
+    date: getAutopilotDate(order.reservationTime),
+    time: getAutopilotTime(order.reservationTime),
+    amount: order.amount,
+    status: mapOrderStatusToAutopilotStatus(order.status),
+    risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
+    orderType: mapOrderTypeToAutopilotType(order.orderType),
+    partySize: order.guests,
+    reliabilityScore: order.reliabilityScore,
+    depositRequired: order.depositRequired,
+    depositPaid: order.depositPaid,
+    paymentVerified: order.status === "PAID",
+    suspiciousPaymentScreenshot: order.terminalMismatch,
+    blocked: isBlocked(order),
+  }));
+}, [orders, settings]);
+
+useEffect(() => {
+  evaluateOrders(autopilotOrders);
+}, [autopilotOrders, evaluateOrders]);
+
   if (loading || !settings) {
     return <div className="min-h-screen bg-neutral-50 p-6">Loading owner dashboard...</div>;
   }
@@ -590,32 +658,8 @@ export default function RestaurantOwnerPage() {
           </section>
 
           <section className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
-            <div className="mb-5">
-              <h2 className="text-2xl font-semibold tracking-tight">Autopilot Queue</h2>
-              <p className="mt-2 text-sm text-neutral-600">
-                What Valsentra is watching automatically in the background.
-              </p>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {autopilotAlerts.length === 0 ? (
-                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">
-                  No autopilot items right now.
-                </div>
-              ) : (
-                autopilotAlerts.map((alert) => (
-                  <article
-                    key={`${alert.orderId}-${alert.title}`}
-                    className="rounded-[22px] border border-neutral-200 bg-neutral-50 p-4"
-                  >
-                    <p className="font-semibold">{alert.title}</p>
-                    <p className="mt-1 text-sm text-neutral-500">{alert.orderId}</p>
-                    <p className="mt-3 text-sm text-neutral-700">{alert.reason}</p>
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
+  <AutopilotQueuePanel />
+</section>
 
           <section className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
             <div className="mb-5">
