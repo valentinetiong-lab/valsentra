@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useAutopilotStore } from "../store/autopilotStore";
+import type { RestaurantOrder as AutopilotOrder } from "../types/autopilot";
 
 type OrderStatus =
   | "UNPAID"
@@ -100,13 +102,52 @@ function riskBadgeClasses(level: RiskLevel) {
   return "bg-green-100 text-green-700 border-green-200";
 }
 
+function mapStaffStatusToAutopilotStatus(
+  status: OrderStatus
+): AutopilotOrder["status"] {
+  if (status === "PAID") return "Paid";
+  if (status === "CANCELLED") return "Cancelled";
+  if (status === "NO_SHOW") return "No-show";
+  return "Pending";
+}
+
+function mapStaffOrderTypeToAutopilotType(
+  orderType: OrderType
+): AutopilotOrder["orderType"] {
+  if (orderType === "DINE_IN_RESERVATION") return "DINE_IN";
+  if (orderType === "DELIVERY_PREORDER") return "DELIVERY";
+  return "PICKUP";
+}
+
+function getStaffAutopilotDate(value?: string) {
+  if (!value) return new Date().toISOString().slice(0, 10);
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getStaffAutopilotTime(value?: string) {
+  if (!value) return "18:00";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "18:00";
+  }
+
+  return parsed.toTimeString().slice(0, 5);
+}
+
 export default function RestaurantStaffPage() {
   const [orders, setOrders] = useState<RestaurantOrder[]>([]);
   const [settings, setSettings] = useState<RestaurantSettings | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
+const { evaluateOrders } = useAutopilotStore();
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAdd, setQuickAdd] = useState({
     customerName: "",
@@ -561,6 +602,30 @@ export default function RestaurantStaffPage() {
   const closedOrders = useMemo(() => {
     return orders.filter((o) => o.status === "CANCELLED" || o.status === "NO_SHOW");
   }, [orders]);
+
+const autopilotOrders = useMemo<AutopilotOrder[]>(() => {
+  return orders.map((order) => ({
+    id: order.id,
+    customerName: order.customerName,
+    date: getStaffAutopilotDate(order.reservationTime),
+    time: getStaffAutopilotTime(order.reservationTime),
+    amount: order.amount,
+    status: mapStaffStatusToAutopilotStatus(order.status),
+    risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
+    orderType: mapStaffOrderTypeToAutopilotType(order.orderType),
+    partySize: order.guests,
+    reliabilityScore: order.reliabilityScore,
+    depositRequired: order.depositRequired,
+    depositPaid: order.depositPaid,
+    paymentVerified: order.status === "PAID",
+    suspiciousPaymentScreenshot: order.terminalMismatch,
+    blocked: isBlocked(order),
+  }));
+}, [orders, settings]);
+
+useEffect(() => {
+  evaluateOrders(autopilotOrders);
+}, [autopilotOrders, evaluateOrders]);
 
   if (loading) {
     return <div className="min-h-screen bg-neutral-50 p-6">Loading restaurant orders...</div>;
