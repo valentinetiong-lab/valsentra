@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useAutopilotStore } from "../store/autopilotStore";
 import type { RestaurantOrder as AutopilotOrder } from "../types/autopilot";
+import { applyReliabilityEvent } from "../lib/reliabilityEngine";
+import { calculateDepositDecision } from "../lib/depositEngine";
 
 type OrderStatus =
   | "UNPAID"
@@ -147,7 +149,8 @@ export default function RestaurantStaffPage() {
   const [waitlist, setWaitlist] = useState<WaitlistLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-const { evaluateOrders } = useAutopilotStore();
+  const { evaluateOrders } = useAutopilotStore();
+
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAdd, setQuickAdd] = useState({
     customerName: "",
@@ -202,50 +205,6 @@ const { evaluateOrders } = useAutopilotStore();
 
   function isBlacklisted(score: number) {
     return score <= 10;
-  }
-
-  function reduceReliability(score: number) {
-    return Math.max(score - 20, 0);
-  }
-
-  function increaseReliability(score: number) {
-    return Math.min(score + 5, 100);
-  }
-
-  function shouldRequireDeposit(input: {
-    orderType: OrderType;
-    guests: number;
-    amount: number;
-    reliabilityScore: number;
-  }) {
-    if (!settings) return false;
-
-    if (
-      input.orderType === "DINE_IN_RESERVATION" &&
-      input.guests >= settings.dineInDepositGuestsThreshold
-    ) {
-      return true;
-    }
-
-    if (
-      input.orderType === "PREORDER_PICKUP" &&
-      input.amount >= settings.pickupDepositAmountThreshold
-    ) {
-      return true;
-    }
-
-    if (
-      input.orderType === "DELIVERY_PREORDER" &&
-      settings.requireDeliveryDeposit
-    ) {
-      return true;
-    }
-
-    if (input.reliabilityScore <= settings.lowReliabilityThreshold) {
-      return true;
-    }
-
-    return false;
   }
 
   function getRiskLevel(input: {
@@ -376,8 +335,34 @@ const { evaluateOrders } = useAutopilotStore();
     const target = orders.find((o) => o.id === orderId);
     if (!target) return;
 
+    const newReliability = applyReliabilityEvent(
+      target.reliabilityScore,
+      "ORDER_CANCELLED"
+    );
+
+    const newRisk = getRiskLevel({
+      amount: target.amount,
+      guests: target.guests,
+      reliabilityScore: newReliability,
+      terminalMismatch: target.terminalMismatch,
+      status: "CANCELLED",
+      orderType: target.orderType,
+    });
+
+    const protectionReason = getProtectionReason({
+      depositRequired: target.depositRequired,
+      reliabilityScore: newReliability,
+      terminalMismatch: target.terminalMismatch,
+      amount: target.amount,
+      guests: target.guests,
+      orderType: target.orderType,
+    });
+
     const updated = await patchOrder(orderId, {
       status: "CANCELLED",
+      reliabilityScore: newReliability,
+      riskLevel: newRisk,
+      protectionReason,
       notes: "Order cancelled.",
     });
 
@@ -390,15 +375,27 @@ const { evaluateOrders } = useAutopilotStore();
     const target = orders.find((o) => o.id === orderId);
     if (!target) return;
 
-    const newReliability = reduceReliability(target.reliabilityScore);
+    const newReliability = applyReliabilityEvent(
+      target.reliabilityScore,
+      "NO_SHOW"
+    );
+
     const newRisk = getRiskLevel({
-      ...target,
+      amount: target.amount,
+      guests: target.guests,
       reliabilityScore: newReliability,
       terminalMismatch: target.terminalMismatch,
+      status: "NO_SHOW",
+      orderType: target.orderType,
     });
+
     const protectionReason = getProtectionReason({
-      ...target,
+      depositRequired: target.depositRequired,
       reliabilityScore: newReliability,
+      terminalMismatch: target.terminalMismatch,
+      amount: target.amount,
+      guests: target.guests,
+      orderType: target.orderType,
     });
 
     const updated = await patchOrder(orderId, {
@@ -432,13 +429,23 @@ const { evaluateOrders } = useAutopilotStore();
     }
 
     if (enteredAmount !== target.amount) {
+      const fraudReliability = applyReliabilityEvent(
+        target.reliabilityScore,
+        "FRAUD_ATTEMPT"
+      );
+
       const newRisk = getRiskLevel({
-        ...target,
+        amount: target.amount,
+        guests: target.guests,
+        reliabilityScore: fraudReliability,
         terminalMismatch: true,
+        status: target.status,
+        orderType: target.orderType,
       });
 
       const updated = await patchOrder(orderId, {
         terminalMismatch: true,
+        reliabilityScore: fraudReliability,
         riskLevel: newRisk,
         protectionReason: "Terminal mismatch",
         notes: `Mismatch. Expected ${target.amount}, got ${enteredAmount}.`,
@@ -456,7 +463,10 @@ const { evaluateOrders } = useAutopilotStore();
       return;
     }
 
-    const newReliability = increaseReliability(target.reliabilityScore);
+    const newReliability = applyReliabilityEvent(
+      target.reliabilityScore,
+      "ORDER_COMPLETED"
+    );
 
     const updated = await patchOrder(orderId, {
       status: "PAID",
@@ -498,12 +508,24 @@ const { evaluateOrders } = useAutopilotStore();
     }
 
     const reliabilityScore = 70;
-    const depositRequired = shouldRequireDeposit({
+
+    if (!settings) {
+      alert("Settings not loaded yet.");
+      return;
+    }
+
+    const depositDecision = calculateDepositDecision({
       orderType: quickAdd.orderType,
       guests: Number(quickAdd.guests),
       amount: Number(quickAdd.amount),
       reliabilityScore,
+      dineInDepositGuestsThreshold: settings.dineInDepositGuestsThreshold,
+      pickupDepositAmountThreshold: settings.pickupDepositAmountThreshold,
+      requireDeliveryDeposit: settings.requireDeliveryDeposit,
+      lowReliabilityThreshold: settings.lowReliabilityThreshold,
     });
+
+    const depositRequired = depositDecision.required;
 
     const riskLevel = getRiskLevel({
       amount: Number(quickAdd.amount),
@@ -514,14 +536,16 @@ const { evaluateOrders } = useAutopilotStore();
       orderType: quickAdd.orderType,
     });
 
-    const protectionReason = getProtectionReason({
-      depositRequired,
-      reliabilityScore,
-      terminalMismatch: false,
-      amount: Number(quickAdd.amount),
-      guests: Number(quickAdd.guests),
-      orderType: quickAdd.orderType,
-    });
+    const protectionReason = depositRequired
+      ? depositDecision.reason
+      : getProtectionReason({
+          depositRequired,
+          reliabilityScore,
+          terminalMismatch: false,
+          amount: Number(quickAdd.amount),
+          guests: Number(quickAdd.guests),
+          orderType: quickAdd.orderType,
+        });
 
     const newOrder: RestaurantOrder = {
       id: `ORD-${Date.now().toString().slice(-6)}`,
@@ -603,29 +627,29 @@ const { evaluateOrders } = useAutopilotStore();
     return orders.filter((o) => o.status === "CANCELLED" || o.status === "NO_SHOW");
   }, [orders]);
 
-const autopilotOrders = useMemo<AutopilotOrder[]>(() => {
-  return orders.map((order) => ({
-    id: order.id,
-    customerName: order.customerName,
-    date: getStaffAutopilotDate(order.reservationTime),
-    time: getStaffAutopilotTime(order.reservationTime),
-    amount: order.amount,
-    status: mapStaffStatusToAutopilotStatus(order.status),
-    risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
-    orderType: mapStaffOrderTypeToAutopilotType(order.orderType),
-    partySize: order.guests,
-    reliabilityScore: order.reliabilityScore,
-    depositRequired: order.depositRequired,
-    depositPaid: order.depositPaid,
-    paymentVerified: order.status === "PAID",
-    suspiciousPaymentScreenshot: order.terminalMismatch,
-    blocked: isBlocked(order),
-  }));
-}, [orders, settings]);
+  const autopilotOrders = useMemo<AutopilotOrder[]>(() => {
+    return orders.map((order) => ({
+      id: order.id,
+      customerName: order.customerName,
+      date: getStaffAutopilotDate(order.reservationTime),
+      time: getStaffAutopilotTime(order.reservationTime),
+      amount: order.amount,
+      status: mapStaffStatusToAutopilotStatus(order.status),
+      risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
+      orderType: mapStaffOrderTypeToAutopilotType(order.orderType),
+      partySize: order.guests,
+      reliabilityScore: order.reliabilityScore,
+      depositRequired: order.depositRequired,
+      depositPaid: order.depositPaid,
+      paymentVerified: order.status === "PAID",
+      suspiciousPaymentScreenshot: order.terminalMismatch,
+      blocked: isBlocked(order),
+    }));
+  }, [orders, settings]);
 
-useEffect(() => {
-  evaluateOrders(autopilotOrders);
-}, [autopilotOrders, evaluateOrders]);
+  useEffect(() => {
+    evaluateOrders(autopilotOrders);
+  }, [autopilotOrders, evaluateOrders]);
 
   if (loading) {
     return <div className="min-h-screen bg-neutral-50 p-6">Loading restaurant orders...</div>;
@@ -778,7 +802,7 @@ useEffect(() => {
                             {order.customerName}
                           </h3>
 
-                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700 border border-neutral-200">
+                          <span className="rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-semibold text-neutral-700">
                             {order.id}
                           </span>
 
@@ -812,7 +836,7 @@ useEffect(() => {
                           <p><span className="font-medium text-neutral-900">Reliability:</span> {order.reliabilityScore}%</p>
                         </div>
 
-                        <div className="mt-4 rounded-2xl bg-white px-4 py-3 border border-neutral-200">
+                        <div className="mt-4 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
                           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">
                             Protection
                           </p>
