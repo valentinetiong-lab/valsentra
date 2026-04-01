@@ -6,6 +6,7 @@ import { useAutopilotStore } from "../store/autopilotStore";
 import type { RestaurantOrder as AutopilotOrder } from "../types/autopilot";
 import { applyReliabilityEvent } from "../lib/reliabilityEngine";
 import { calculateDepositDecision } from "../lib/depositEngine";
+import { findBestWaitlistLead } from "../lib/waitlistEngine";
 
 type OrderStatus =
   | "UNPAID"
@@ -292,17 +293,16 @@ export default function RestaurantStaffPage() {
   }
 
   function getBestWaitlistLead(order: RestaurantOrder) {
-    const matches = waitlist.filter((lead) => lead.preferredType === order.orderType);
+    const result = findBestWaitlistLead(
+      {
+        id: order.id,
+        orderType: order.orderType,
+        amount: order.amount,
+      },
+      waitlist
+    );
 
-    if (matches.length === 0) return null;
-
-    const sorted = [...matches].sort((a, b) => {
-      const aScore = a.showProbability + a.responseSpeedScore + a.reliabilityScore;
-      const bScore = b.showProbability + b.responseSpeedScore + b.reliabilityScore;
-      return bScore - aScore;
-    });
-
-    return sorted[0];
+    return result;
   }
 
   async function patchOrder(id: string, updates: Partial<RestaurantOrder>) {
@@ -939,7 +939,8 @@ export default function RestaurantStaffPage() {
                 </div>
               ) : (
                 closedOrders.map((order) => {
-                  const bestLead = getBestWaitlistLead(order);
+                  const recovery = getBestWaitlistLead(order);
+                  const bestLead = recovery.bestLead;
 
                   return (
                     <article
@@ -962,7 +963,18 @@ export default function RestaurantStaffPage() {
                           <div className="mt-3 space-y-1 text-sm text-neutral-700">
                             <p><span className="font-medium text-neutral-900">Amount:</span> {formatCurrency(order.amount)}</p>
                             <p><span className="font-medium text-neutral-900">Type:</span> {getOrderTypeLabel(order.orderType)}</p>
-                            <p><span className="font-medium text-neutral-900">Recovery:</span> {bestLead ? `Offer to ${bestLead.customerName}` : "No suitable waitlist lead"}</p>
+                            <p>
+                              <span className="font-medium text-neutral-900">Recovery:</span>{" "}
+                              {bestLead ? `Offer to ${bestLead.customerName}` : "No suitable waitlist lead"}
+                            </p>
+                            <p>
+                              <span className="font-medium text-neutral-900">Recovery score:</span>{" "}
+                              {recovery.recoveryScore}
+                            </p>
+                            <p>
+                              <span className="font-medium text-neutral-900">Recoverable revenue:</span>{" "}
+                              {formatCurrency(recovery.recoverableRevenue)}
+                            </p>
                           </div>
                         </div>
 
