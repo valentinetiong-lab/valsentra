@@ -1,21 +1,24 @@
 import { create } from "zustand";
 import { defaultAutopilotRules } from "../lib/default-autopilot-rules";
-import { buildAutopilotQueue } from "../lib/autopilotEngine";
+import { runAutopilot } from "../lib/autopilotEngine";
 import {
   AutopilotQueueItem,
   AutopilotRule,
   RestaurantOrder,
 } from "../types/autopilot";
+
 type AutopilotState = {
   rules: AutopilotRule[];
   queue: AutopilotQueueItem[];
   revenueSaved: number;
+
   setRules: (rules: AutopilotRule[]) => void;
   toggleRule: (key: AutopilotRule["key"]) => void;
   updateRuleConfig: (
     key: AutopilotRule["key"],
     config: Partial<NonNullable<AutopilotRule["config"]>>
   ) => void;
+
   evaluateOrders: (orders: RestaurantOrder[]) => void;
   markQueueItemDone: (id: string) => void;
   markQueueItemSkipped: (id: string) => void;
@@ -51,16 +54,12 @@ export const useAutopilotStore = create<AutopilotState>((set, get) => ({
     })),
 
   evaluateOrders: (orders) => {
-    const rules = get().rules;
-    const queue = buildAutopilotQueue(rules, orders);
-
-    const revenueSaved = queue.reduce((sum: number, item: AutopilotQueueItem) => {
-  return sum + (item.estimatedRevenueProtected ?? 0);
-}, 0);
+    const { rules } = get();
+    const result = runAutopilot(orders, rules);
 
     set({
-      queue,
-      revenueSaved,
+      queue: result.queue,
+      revenueSaved: result.revenueSaved,
     });
   },
 
