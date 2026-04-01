@@ -38,8 +38,8 @@ type RestaurantOrder = {
   reservationTime: string;
   itemSummary: string;
   status: OrderStatus;
-  paymentState: PaymentState;
-  paymentVerified: boolean;
+  paymentState?: PaymentState;
+  paymentVerified?: boolean;
   depositRequired: boolean;
   depositAmount: number;
   depositPaid: boolean;
@@ -108,10 +108,11 @@ function statusBadgeClasses(status: OrderStatus) {
   return "bg-neutral-100 text-neutral-700 border-neutral-200";
 }
 
-function paymentBadgeClasses(state: PaymentState) {
+function paymentBadgeClasses(state?: PaymentState) {
   if (state === "VERIFIED") return "bg-green-100 text-green-700 border-green-200";
   if (state === "LINK_SENT") return "bg-blue-100 text-blue-700 border-blue-200";
-  if (state === "SCREENSHOT_SUBMITTED") return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  if (state === "SCREENSHOT_SUBMITTED")
+    return "bg-yellow-100 text-yellow-700 border-yellow-200";
   if (state === "SUSPICIOUS" || state === "BLOCKED")
     return "bg-red-100 text-red-700 border-red-200";
   return "bg-neutral-100 text-neutral-700 border-neutral-200";
@@ -346,6 +347,98 @@ export default function RestaurantStaffPage() {
 
       setOrders((prev) => prev.map((o) => (o.id === id ? data : o)));
       return data as RestaurantOrder;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createRecoveredOrderFromLead(
+    originalOrder: RestaurantOrder,
+    lead: WaitlistLead
+  ) {
+    if (!settings) {
+      alert("Settings not loaded yet.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const depositDecision = calculateDepositDecision({
+        orderType: originalOrder.orderType,
+        guests: originalOrder.guests,
+        amount: originalOrder.amount,
+        reliabilityScore: lead.reliabilityScore,
+        dineInDepositGuestsThreshold: settings.dineInDepositGuestsThreshold,
+        pickupDepositAmountThreshold: settings.pickupDepositAmountThreshold,
+        requireDeliveryDeposit: settings.requireDeliveryDeposit,
+        lowReliabilityThreshold: settings.lowReliabilityThreshold,
+      });
+
+      const riskLevel = getRiskLevel({
+        amount: originalOrder.amount,
+        guests: originalOrder.guests,
+        reliabilityScore: lead.reliabilityScore,
+        terminalMismatch: false,
+        status: "UNPAID",
+        orderType: originalOrder.orderType,
+      });
+
+      const protectionReason = depositDecision.required
+        ? `Recovered from waitlist • ${depositDecision.reason}`
+        : "Recovered from waitlist";
+
+      const replacementOrder: RestaurantOrder = {
+        id: `ORD-${Date.now().toString().slice(-6)}`,
+        customerName: lead.customerName,
+        phone: lead.phone,
+        orderType: originalOrder.orderType,
+        amount: originalOrder.amount,
+        guests: originalOrder.guests,
+        reservationTime: originalOrder.reservationTime,
+        itemSummary: `Recovered from ${originalOrder.id} • ${originalOrder.itemSummary}`,
+        status: "UNPAID",
+        paymentState: "PENDING",
+        paymentVerified: false,
+        depositRequired: depositDecision.required,
+        depositAmount: depositDecision.depositAmount,
+        depositPaid: false,
+        reliabilityScore: lead.reliabilityScore,
+        terminalMismatch: false,
+        notes: `Waitlist recovery from ${originalOrder.id}.`,
+        assignedStaff: "Recovery",
+        riskLevel,
+        protectionReason,
+      };
+
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(replacementOrder),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Failed to create recovered order.");
+        return;
+      }
+
+      setOrders((prev) => [data, ...prev]);
+
+      await patchOrder(originalOrder.id, {
+        notes: `${originalOrder.notes} | Waitlist recovered by ${lead.customerName}.`,
+      });
+
+      await logAudit(
+        `Recovered slot ${originalOrder.id} with waitlist lead ${lead.customerName}`,
+        "Staff",
+        data.id
+      );
+
+      alert(`Recovered slot with ${lead.customerName}. New order created.`);
     } finally {
       setSaving(false);
     }
@@ -842,7 +935,7 @@ export default function RestaurantStaffPage() {
                               order.paymentState
                             )}`}
                           >
-                            {order.paymentState}
+                            {order.paymentState ?? "PENDING"}
                           </span>
 
                           <span
@@ -1021,19 +1114,30 @@ export default function RestaurantStaffPage() {
                         </div>
 
                         {bestLead && (
-                          <a
-                            href={buildWhatsAppLink(
-                              bestLead.phone,
-                              `Hi ${bestLead.customerName}, we just opened a ${getOrderTypeLabel(
-                                order.orderType
-                              )} slot/order. Would you like it?`
-                            )}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-center text-sm font-medium text-neutral-900"
-                          >
-                            Offer to Waitlist
-                          </a>
+                          <div className="flex flex-col gap-2 md:w-[240px]">
+                            <a
+                              href={buildWhatsAppLink(
+                                bestLead.phone,
+                                `Hi ${bestLead.customerName}, we just opened a ${getOrderTypeLabel(
+                                  order.orderType
+                                )} slot/order. Would you like it?`
+                              )}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-center text-sm font-medium text-neutral-900"
+                            >
+                              Offer to Waitlist
+                            </a>
+
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => createRecoveredOrderFromLead(order, bestLead)}
+                              className="rounded-2xl bg-black px-4 py-3 text-sm font-medium text-white disabled:opacity-50"
+                            >
+                              Confirm Waitlist Fill
+                            </button>
+                          </div>
                         )}
                       </div>
                     </article>
