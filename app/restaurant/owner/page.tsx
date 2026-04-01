@@ -20,6 +20,14 @@ type OrderType =
 
 type RiskLevel = "LOW" | "MED" | "HIGH";
 
+type PaymentState =
+  | "PENDING"
+  | "LINK_SENT"
+  | "SCREENSHOT_SUBMITTED"
+  | "VERIFIED"
+  | "SUSPICIOUS"
+  | "BLOCKED";
+
 type RestaurantOrder = {
   id: string;
   customerName: string;
@@ -30,7 +38,10 @@ type RestaurantOrder = {
   reservationTime: string;
   itemSummary: string;
   status: OrderStatus;
+  paymentState?: PaymentState;
+  paymentVerified?: boolean;
   depositRequired: boolean;
+  depositAmount?: number;
   depositPaid: boolean;
   reliabilityScore: number;
   terminalMismatch: boolean;
@@ -104,6 +115,16 @@ function riskBadgeClasses(level: RiskLevel) {
   return "bg-green-100 text-green-700 border-green-200";
 }
 
+function paymentBadgeClasses(state?: PaymentState) {
+  if (state === "VERIFIED") return "bg-green-100 text-green-700 border-green-200";
+  if (state === "LINK_SENT") return "bg-blue-100 text-blue-700 border-blue-200";
+  if (state === "SCREENSHOT_SUBMITTED")
+    return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  if (state === "SUSPICIOUS" || state === "BLOCKED")
+    return "bg-red-100 text-red-700 border-red-200";
+  return "bg-neutral-100 text-neutral-700 border-neutral-200";
+}
+
 function mapOrderStatusToAutopilotStatus(
   status: OrderStatus
 ): AutopilotOrder["status"] {
@@ -143,7 +164,6 @@ function getAutopilotTime(value?: string) {
   return parsed.toTimeString().slice(0, 5);
 }
 
-
 export default function RestaurantOwnerPage() {
   const [orders, setOrders] = useState<RestaurantOrder[]>([]);
   const [audit, setAudit] = useState<AuditItem[]>([]);
@@ -151,7 +171,8 @@ export default function RestaurantOwnerPage() {
   const [waitlist, setWaitlist] = useState<WaitlistLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
-const { evaluateOrders } = useAutopilotStore();
+
+  const { evaluateOrders, syncRulesFromSettings } = useAutopilotStore();
 
   useEffect(() => {
     async function boot() {
@@ -229,6 +250,8 @@ const { evaluateOrders } = useAutopilotStore();
     if (order.status === "PAID") return false;
     if (order.status === "CANCELLED" || order.status === "NO_SHOW") return false;
     if (settings.hardBlockTerminalMismatch && order.terminalMismatch) return true;
+    if (order.paymentState === "BLOCKED" || order.paymentState === "SUSPICIOUS")
+      return true;
     if (order.depositRequired && !order.depositPaid) return true;
     if (settings.autoBlockHighValueUnpaid && requiresProtection(order)) return true;
     if (isBlacklisted(order.reliabilityScore)) return true;
@@ -314,6 +337,8 @@ const { evaluateOrders } = useAutopilotStore();
     return orders.filter(
       (order) =>
         order.terminalMismatch ||
+        order.paymentState === "SCREENSHOT_SUBMITTED" ||
+        order.paymentState === "SUSPICIOUS" ||
         order.reliabilityScore <= 20 ||
         isBlacklisted(order.reliabilityScore) ||
         (order.riskLevel ?? "LOW") === "HIGH"
@@ -329,52 +354,6 @@ const { evaluateOrders } = useAutopilotStore();
 
     return { highRisk, mediumRisk, unpaid };
   }, [orders]);
-
-  const autopilotAlerts = useMemo(() => {
-    return orders
-      .filter((o) => o.status !== "PAID" && o.status !== "CANCELLED")
-      .map((order) => {
-        if (order.terminalMismatch) {
-          return {
-            orderId: order.id,
-            title: "Hard block release",
-            reason: "Terminal mismatch detected. Staff must not release this order.",
-          };
-        }
-
-        if (order.depositRequired && !order.depositPaid) {
-          return {
-            orderId: order.id,
-            title: "Deposit pending",
-            reason: "Deposit or payment is still pending before confirmation.",
-          };
-        }
-
-        if ((order.riskLevel ?? "LOW") === "HIGH") {
-          return {
-            orderId: order.id,
-            title: "High risk order",
-            reason:
-              order.protectionReason || "High-risk order needs strict protection.",
-          };
-        }
-
-        if (requiresProtection(order) && order.status !== "PAID") {
-          return {
-            orderId: order.id,
-            title: "Protection rule triggered",
-            reason:
-              "This order matches owner protection rules and should stay blocked until verified.",
-          };
-        }
-
-        return {
-          orderId: order.id,
-          title: "Monitor order",
-          reason: "Order is active and still needs operational attention.",
-        };
-      });
-  }, [orders, settings]);
 
   const customerProfiles = useMemo(() => {
     const map = new Map<
@@ -416,28 +395,43 @@ const { evaluateOrders } = useAutopilotStore();
   }, [orders]);
 
   const autopilotOrders = useMemo<AutopilotOrder[]>(() => {
-  return orders.map((order) => ({
-    id: order.id,
-    customerName: order.customerName,
-    date: getAutopilotDate(order.reservationTime),
-    time: getAutopilotTime(order.reservationTime),
-    amount: order.amount,
-    status: mapOrderStatusToAutopilotStatus(order.status),
-    risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
-    orderType: mapOrderTypeToAutopilotType(order.orderType),
-    partySize: order.guests,
-    reliabilityScore: order.reliabilityScore,
-    depositRequired: order.depositRequired,
-    depositPaid: order.depositPaid,
-    paymentVerified: order.status === "PAID",
-    suspiciousPaymentScreenshot: order.terminalMismatch,
-    blocked: isBlocked(order),
-  }));
-}, [orders, settings]);
+    return orders.map((order) => ({
+      id: order.id,
+      customerName: order.customerName,
+      date: getAutopilotDate(order.reservationTime),
+      time: getAutopilotTime(order.reservationTime),
+      amount: order.amount,
+      status: mapOrderStatusToAutopilotStatus(order.status),
+      risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
+      orderType: mapOrderTypeToAutopilotType(order.orderType),
+      partySize: order.guests,
+      reliabilityScore: order.reliabilityScore,
+      depositRequired: order.depositRequired,
+      depositPaid: order.depositPaid,
+      paymentVerified: order.paymentVerified || order.status === "PAID",
+      suspiciousPaymentScreenshot:
+        order.paymentState === "SCREENSHOT_SUBMITTED" ||
+        order.paymentState === "SUSPICIOUS" ||
+        order.terminalMismatch,
+      blocked: isBlocked(order),
+    }));
+  }, [orders, settings]);
 
-useEffect(() => {
-  evaluateOrders(autopilotOrders);
-}, [autopilotOrders, evaluateOrders]);
+  useEffect(() => {
+    evaluateOrders(autopilotOrders);
+  }, [autopilotOrders, evaluateOrders]);
+
+  useEffect(() => {
+    if (settings) {
+      syncRulesFromSettings({
+        dineInDepositGuestsThreshold: settings.dineInDepositGuestsThreshold,
+        pickupDepositAmountThreshold: settings.pickupDepositAmountThreshold,
+        lowReliabilityThreshold: settings.lowReliabilityThreshold,
+        autoBlockHighValueUnpaid: settings.autoBlockHighValueUnpaid,
+        hardBlockTerminalMismatch: settings.hardBlockTerminalMismatch,
+      });
+    }
+  }, [settings, syncRulesFromSettings]);
 
   if (loading || !settings) {
     return <div className="min-h-screen bg-neutral-50 p-6">Loading owner dashboard...</div>;
@@ -622,6 +616,17 @@ useEffect(() => {
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-semibold">{order.id}</p>
+
+                      {order.paymentState ? (
+                        <span
+                          className={`rounded-full border px-3 py-1 text-xs font-semibold ${paymentBadgeClasses(
+                            order.paymentState
+                          )}`}
+                        >
+                          {order.paymentState}
+                        </span>
+                      ) : null}
+
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-semibold ${riskBadgeClasses(
                           (order.riskLevel ?? "LOW") as RiskLevel
@@ -658,8 +663,8 @@ useEffect(() => {
           </section>
 
           <section className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
-  <AutopilotQueuePanel />
-</section>
+            <AutopilotQueuePanel />
+          </section>
 
           <section className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
             <div className="mb-5">
@@ -784,6 +789,16 @@ useEffect(() => {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
+                        {order.paymentState ? (
+                          <span
+                            className={`rounded-full border px-3 py-1 text-xs font-semibold ${paymentBadgeClasses(
+                              order.paymentState
+                            )}`}
+                          >
+                            {order.paymentState}
+                          </span>
+                        ) : null}
+
                         <span
                           className={`rounded-full border px-3 py-1 text-xs font-semibold ${riskBadgeClasses(
                             (order.riskLevel ?? "LOW") as RiskLevel

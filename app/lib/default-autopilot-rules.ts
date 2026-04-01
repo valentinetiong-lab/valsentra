@@ -1,4 +1,4 @@
-import { AutopilotRule } from "@/app/types/autopilot";
+import { AutopilotRule } from "../types/autopilot";
 
 export const defaultAutopilotRules: AutopilotRule[] = [
   {
@@ -71,5 +71,25 @@ export const defaultAutopilotRules: AutopilotRule[] = [
     description: "Screenshot-based proof should trigger manual verification.",
     enabled: true,
     actions: ["FLAG_FRAUD"],
+  },
+  {
+    key: "TIME_BASED_REMINDER",
+    title: "Send reminder before booking",
+    description: "Send a reminder when the booking is approaching and still unpaid.",
+    enabled: true,
+    config: {
+      reminderHoursBefore: 24,
+    },
+    actions: ["SEND_REMINDER"],
+  },
+  {
+    key: "UNPAID_RELEASE_SLOT",
+    title: "Release unpaid slot near reservation time",
+    description: "Release risky unpaid slots near service time and trigger waitlist recovery.",
+    enabled: true,
+    config: {
+      unpaidReleaseMinutesBefore: 30,
+    },
+    actions: ["RELEASE_SLOT", "OFFER_WAITLIST"],
   },
 ];

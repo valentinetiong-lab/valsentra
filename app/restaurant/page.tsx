@@ -7,6 +7,12 @@ import type { RestaurantOrder as AutopilotOrder } from "../types/autopilot";
 import { applyReliabilityEvent } from "../lib/reliabilityEngine";
 import { calculateDepositDecision } from "../lib/depositEngine";
 import { findBestWaitlistLead } from "../lib/waitlistEngine";
+import {
+  PaymentState,
+  sendPaymentLinkTransition,
+  submitScreenshotTransition,
+  verifyPaymentAmount,
+} from "../lib/paymentVerificationEngine";
 
 type OrderStatus =
   | "UNPAID"
@@ -32,7 +38,10 @@ type RestaurantOrder = {
   reservationTime: string;
   itemSummary: string;
   status: OrderStatus;
+  paymentState: PaymentState;
+  paymentVerified: boolean;
   depositRequired: boolean;
+  depositAmount: number;
   depositPaid: boolean;
   reliabilityScore: number;
   terminalMismatch: boolean;
@@ -96,6 +105,15 @@ function statusBadgeClasses(status: OrderStatus) {
   if (status === "UNPAID") return "bg-red-100 text-red-700 border-red-200";
   if (status === "NO_SHOW") return "bg-orange-100 text-orange-700 border-orange-200";
   if (status === "CANCELLED") return "bg-neutral-200 text-neutral-700 border-neutral-300";
+  return "bg-neutral-100 text-neutral-700 border-neutral-200";
+}
+
+function paymentBadgeClasses(state: PaymentState) {
+  if (state === "VERIFIED") return "bg-green-100 text-green-700 border-green-200";
+  if (state === "LINK_SENT") return "bg-blue-100 text-blue-700 border-blue-200";
+  if (state === "SCREENSHOT_SUBMITTED") return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  if (state === "SUSPICIOUS" || state === "BLOCKED")
+    return "bg-red-100 text-red-700 border-red-200";
   return "bg-neutral-100 text-neutral-700 border-neutral-200";
 }
 
@@ -269,6 +287,8 @@ export default function RestaurantStaffPage() {
     if (order.status === "PAID") return false;
     if (order.status === "CANCELLED" || order.status === "NO_SHOW") return false;
     if (order.terminalMismatch) return true;
+    if (order.paymentState === "BLOCKED" || order.paymentState === "SUSPICIOUS")
+      return true;
     if (order.depositRequired && !order.depositPaid) return true;
     if (isBlacklisted(order.reliabilityScore)) return true;
     return false;
@@ -428,71 +448,68 @@ export default function RestaurantStaffPage() {
       return;
     }
 
-    if (enteredAmount !== target.amount) {
-      const fraudReliability = applyReliabilityEvent(
-        target.reliabilityScore,
-        "FRAUD_ATTEMPT"
-      );
+    const verification = verifyPaymentAmount(target.amount, enteredAmount);
 
-      const newRisk = getRiskLevel({
-        amount: target.amount,
-        guests: target.guests,
-        reliabilityScore: fraudReliability,
-        terminalMismatch: true,
-        status: target.status,
-        orderType: target.orderType,
-      });
+    const nextReliability = verification.reliabilityEvent
+      ? applyReliabilityEvent(target.reliabilityScore, verification.reliabilityEvent)
+      : target.reliabilityScore;
 
-      const updated = await patchOrder(orderId, {
-        terminalMismatch: true,
-        reliabilityScore: fraudReliability,
-        riskLevel: newRisk,
-        protectionReason: "Terminal mismatch",
-        notes: `Mismatch. Expected ${target.amount}, got ${enteredAmount}.`,
-      });
-
-      if (updated) {
-        await logAudit(
-          `Terminal mismatch detected. Expected ${target.amount}, got ${enteredAmount}`,
-          "Staff",
-          orderId
-        );
-      }
-
-      alert("Mismatch detected. Order stays blocked.");
-      return;
-    }
-
-    const newReliability = applyReliabilityEvent(
-      target.reliabilityScore,
-      "ORDER_COMPLETED"
-    );
+    const nextRisk = getRiskLevel({
+      amount: target.amount,
+      guests: target.guests,
+      reliabilityScore: nextReliability,
+      terminalMismatch: verification.terminalMismatch,
+      status: verification.paymentVerified ? "PAID" : target.status,
+      orderType: target.orderType,
+    });
 
     const updated = await patchOrder(orderId, {
-      status: "PAID",
-      depositPaid: true,
-      terminalMismatch: false,
-      reliabilityScore: newReliability,
-      riskLevel: "LOW",
-      protectionReason: "Payment verified",
-      notes: "Payment verified.",
+      status: verification.paymentVerified ? "PAID" : target.status,
+      paymentState: verification.paymentState,
+      paymentVerified: verification.paymentVerified,
+      depositPaid: verification.paymentVerified ? true : target.depositPaid,
+      terminalMismatch: verification.terminalMismatch,
+      reliabilityScore: nextReliability,
+      riskLevel: verification.paymentVerified ? "LOW" : nextRisk,
+      protectionReason: verification.paymentVerified
+        ? "Payment verified"
+        : "Terminal mismatch",
+      notes: verification.reason,
     });
 
     if (updated) {
-      await logAudit("Marked payment verified", "Staff", orderId);
-      alert("Payment verified.");
+      await logAudit(verification.reason, "Staff", orderId);
     }
+
+    alert(verification.reason);
   }
 
   async function sendPaymentLink(order: RestaurantOrder) {
     const updated = await patchOrder(order.id, {
       status: "PAYMENT_SENT",
-      notes: "Payment link sent to customer.",
+      paymentState: sendPaymentLinkTransition(),
+      notes: `Payment link sent to customer. Deposit due: ${formatCurrency(
+        order.depositAmount || order.amount * 0.3
+      )}`,
     });
 
     if (updated) {
       await logAudit("Sent payment link", "Staff", order.id);
       window.open(`/pay/${order.id}`, "_blank");
+    }
+  }
+
+  async function submitPaymentScreenshot(orderId: string) {
+    const target = orders.find((o) => o.id === orderId);
+    if (!target) return;
+
+    const updated = await patchOrder(orderId, {
+      paymentState: submitScreenshotTransition(),
+      notes: "Customer submitted screenshot. Manual verification required.",
+    });
+
+    if (updated) {
+      await logAudit("Marked screenshot submitted", "Staff", orderId);
     }
   }
 
@@ -557,7 +574,10 @@ export default function RestaurantStaffPage() {
       reservationTime: quickAdd.reservationTime,
       itemSummary: quickAdd.itemSummary || "New order",
       status: "UNPAID",
+      paymentState: "PENDING",
+      paymentVerified: false,
       depositRequired,
+      depositAmount: depositDecision.depositAmount,
       depositPaid: false,
       reliabilityScore,
       terminalMismatch: false,
@@ -641,8 +661,11 @@ export default function RestaurantStaffPage() {
       reliabilityScore: order.reliabilityScore,
       depositRequired: order.depositRequired,
       depositPaid: order.depositPaid,
-      paymentVerified: order.status === "PAID",
-      suspiciousPaymentScreenshot: order.terminalMismatch,
+      paymentVerified: order.paymentVerified || order.status === "PAID",
+      suspiciousPaymentScreenshot:
+        order.paymentState === "SCREENSHOT_SUBMITTED" ||
+        order.paymentState === "SUSPICIOUS" ||
+        order.terminalMismatch,
       blocked: isBlocked(order),
     }));
   }, [orders, settings]);
@@ -815,6 +838,14 @@ export default function RestaurantStaffPage() {
                           </span>
 
                           <span
+                            className={`rounded-full border px-3 py-1 text-xs font-semibold ${paymentBadgeClasses(
+                              order.paymentState
+                            )}`}
+                          >
+                            {order.paymentState}
+                          </span>
+
+                          <span
                             className={`rounded-full border px-3 py-1 text-xs font-semibold ${riskBadgeClasses(
                               (order.riskLevel ?? "LOW") as RiskLevel
                             )}`}
@@ -834,6 +865,8 @@ export default function RestaurantStaffPage() {
                           <p><span className="font-medium text-neutral-900">Amount:</span> {formatCurrency(order.amount)}</p>
                           <p><span className="font-medium text-neutral-900">Type:</span> {getOrderTypeLabel(order.orderType)}</p>
                           <p><span className="font-medium text-neutral-900">Reliability:</span> {order.reliabilityScore}%</p>
+                          <p><span className="font-medium text-neutral-900">Deposit:</span> {order.depositRequired ? formatCurrency(order.depositAmount) : "Not required"}</p>
+                          <p><span className="font-medium text-neutral-900">Verified:</span> {order.paymentVerified ? "Yes" : "No"}</p>
                         </div>
 
                         <div className="mt-4 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
@@ -869,6 +902,15 @@ export default function RestaurantStaffPage() {
                             className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-center text-sm font-medium text-neutral-900 disabled:opacity-50"
                           >
                             Payment Link
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => submitPaymentScreenshot(order.id)}
+                            disabled={saving}
+                            className="rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-center text-sm font-medium text-neutral-900 disabled:opacity-50"
+                          >
+                            Screenshot Submitted
                           </button>
 
                           <a

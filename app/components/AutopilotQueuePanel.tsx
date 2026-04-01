@@ -28,19 +28,31 @@ function formatAutopilotAction(action: string) {
 
 function handleAutopilotAction(item: AutopilotQueueItem) {
   if (item.action === "SEND_PAYMENT_LINK") {
-    const message = `Hi ${item.customerName}, to confirm your order, please complete the deposit/payment here: [PAYMENT LINK]. Thank you.`;
+    const message = `Hi ${item.customerName}, to confirm your booking/order, please complete the deposit/payment now.`;
+    const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+    return;
+  }
+
+  if (item.action === "SEND_REMINDER") {
+    const message = `Hi ${item.customerName}, this is a reminder that your booking/order is coming up soon. Please confirm payment if still pending.`;
     const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
     window.open(url, "_blank");
     return;
   }
 
   if (item.action === "OFFER_WAITLIST") {
-    alert("Offer this slot to waitlist customers.");
+    alert("Offer this newly available slot/order to the waitlist.");
+    return;
+  }
+
+  if (item.action === "RELEASE_SLOT") {
+    alert("Slot should be released for recovery.");
     return;
   }
 
   if (item.action === "BLOCK_ORDER") {
-    alert("Order has been blocked.");
+    alert("Order has been blocked pending verification.");
     return;
   }
 
@@ -51,16 +63,6 @@ function handleAutopilotAction(item: AutopilotQueueItem) {
 
   if (item.action === "REDUCE_RELIABILITY") {
     alert("Customer reliability should be reduced.");
-    return;
-  }
-
-  if (item.action === "SEND_REMINDER") {
-    alert("Reminder should be sent.");
-    return;
-  }
-
-  if (item.action === "RELEASE_SLOT") {
-    alert("Slot should be released.");
     return;
   }
 

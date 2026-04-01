@@ -1,3 +1,4 @@
+
 type DepositDecisionInput = {
   orderType: "DINE_IN_RESERVATION" | "PREORDER_PICKUP" | "DELIVERY_PREORDER";
   guests: number;

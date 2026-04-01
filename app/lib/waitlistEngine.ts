@@ -62,6 +62,7 @@ export function findBestWaitlistLead(
     bestLead,
     recoverableRevenue: order.amount,
     recoveryScore,
-    reason: `Best fit based on show probability, response speed, and reliability`,
+    reason:
+      "Best fit based on show probability, response speed, and reliability",
   };
 }

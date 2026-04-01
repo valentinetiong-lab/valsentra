@@ -7,6 +7,14 @@ import {
   RestaurantOrder,
 } from "../types/autopilot";
 
+type RestaurantSettingsSync = {
+  dineInDepositGuestsThreshold: number;
+  pickupDepositAmountThreshold: number;
+  lowReliabilityThreshold: number;
+  autoBlockHighValueUnpaid: boolean;
+  hardBlockTerminalMismatch: boolean;
+};
+
 type AutopilotState = {
   rules: AutopilotRule[];
   queue: AutopilotQueueItem[];
@@ -18,6 +26,7 @@ type AutopilotState = {
     key: AutopilotRule["key"],
     config: Partial<NonNullable<AutopilotRule["config"]>>
   ) => void;
+  syncRulesFromSettings: (settings: RestaurantSettingsSync) => void;
 
   evaluateOrders: (orders: RestaurantOrder[]) => void;
   markQueueItemDone: (id: string) => void;
@@ -51,6 +60,57 @@ export const useAutopilotStore = create<AutopilotState>((set, get) => ({
             }
           : rule
       ),
+    })),
+
+  syncRulesFromSettings: (settings) =>
+    set((state) => ({
+      rules: state.rules.map((rule) => {
+        if (rule.key === "DINE_IN_DEPOSIT_BY_GUESTS") {
+          return {
+            ...rule,
+            config: {
+              ...rule.config,
+              guestThreshold: settings.dineInDepositGuestsThreshold,
+            },
+          };
+        }
+
+        if (rule.key === "HIGH_VALUE_DEPOSIT") {
+          return {
+            ...rule,
+            config: {
+              ...rule.config,
+              amountThreshold: settings.pickupDepositAmountThreshold,
+            },
+          };
+        }
+
+        if (rule.key === "LOW_RELIABILITY_DEPOSIT") {
+          return {
+            ...rule,
+            config: {
+              ...rule.config,
+              reliabilityThreshold: settings.lowReliabilityThreshold,
+            },
+          };
+        }
+
+        if (rule.key === "AUTO_BLOCK_HIGH_VALUE_UNPAID") {
+          return {
+            ...rule,
+            enabled: settings.autoBlockHighValueUnpaid,
+          };
+        }
+
+        if (rule.key === "HARD_BLOCK_TERMINAL_MISMATCH") {
+          return {
+            ...rule,
+            enabled: settings.hardBlockTerminalMismatch,
+          };
+        }
+
+        return rule;
+      }),
     })),
 
   evaluateOrders: (orders) => {

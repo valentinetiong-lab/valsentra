@@ -40,7 +40,9 @@ export type AutopilotRuleKey =
   | "HARD_BLOCK_TERMINAL_MISMATCH"
   | "LAST_MINUTE_CANCEL_WAITLIST"
   | "NO_SHOW_REDUCE_RELIABILITY"
-  | "PAYMENT_SCREENSHOT_FLAG";
+  | "PAYMENT_SCREENSHOT_FLAG"
+  | "TIME_BASED_REMINDER"
+  | "UNPAID_RELEASE_SLOT";
 
 export type AutopilotRule = {
   key: AutopilotRuleKey;
@@ -52,6 +54,8 @@ export type AutopilotRule = {
     amountThreshold?: number;
     reliabilityThreshold?: number;
     lastMinuteHours?: number;
+    reminderHoursBefore?: number;
+    unpaidReleaseMinutesBefore?: number;
   };
   actions: AutopilotActionType[];
 };

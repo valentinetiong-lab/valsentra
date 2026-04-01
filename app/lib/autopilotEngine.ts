@@ -4,13 +4,22 @@ import {
   RestaurantOrder,
 } from "../types/autopilot";
 import { calculateRiskScore, getRiskLevel } from "./riskEngine";
+import { evaluateTimeAutomation } from "./timeAutomationEngine";
 
 export function runAutopilot(
   orders: RestaurantOrder[],
   rules: AutopilotRule[]
 ): { queue: AutopilotQueueItem[]; revenueSaved: number } {
   const queue: AutopilotQueueItem[] = [];
+  const seen = new Set<string>();
   let revenueSaved = 0;
+
+  function pushQueueItem(item: AutopilotQueueItem) {
+    const key = `${item.orderId}:${item.ruleKey}:${item.action}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    queue.push(item);
+  }
 
   for (const order of orders) {
     const riskScore = calculateRiskScore({
@@ -25,14 +34,13 @@ export function runAutopilot(
     for (const rule of rules) {
       if (!rule.enabled) continue;
 
-      // RULE: Require deposit for larger dine-in groups
       if (
         rule.key === "DINE_IN_DEPOSIT_BY_GUESTS" &&
         order.orderType === "DINE_IN" &&
         (order.partySize ?? 0) >= (rule.config?.guestThreshold ?? 6) &&
         !order.depositPaid
       ) {
-        queue.push({
+        pushQueueItem({
           id: `DEP-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -45,13 +53,12 @@ export function runAutopilot(
         });
       }
 
-      // RULE: Require deposit for high-value orders
       if (
         rule.key === "HIGH_VALUE_DEPOSIT" &&
         order.amount >= (rule.config?.amountThreshold ?? 150) &&
         !order.depositPaid
       ) {
-        queue.push({
+        pushQueueItem({
           id: `HIGHVAL-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -64,14 +71,13 @@ export function runAutopilot(
         });
       }
 
-      // RULE: Low reliability requires deposit
       if (
         rule.key === "LOW_RELIABILITY_DEPOSIT" &&
         (order.reliabilityScore ?? 100) <
           (rule.config?.reliabilityThreshold ?? 50) &&
         !order.depositPaid
       ) {
-        queue.push({
+        pushQueueItem({
           id: `LOWREL-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -86,14 +92,13 @@ export function runAutopilot(
         });
       }
 
-      // RULE: Auto block high-value unpaid
       if (
         rule.key === "AUTO_BLOCK_HIGH_VALUE_UNPAID" &&
         order.status === "Pending" &&
         !order.paymentVerified &&
         order.amount >= (rule.config?.amountThreshold ?? 250)
       ) {
-        queue.push({
+        pushQueueItem({
           id: `BLOCK-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -106,13 +111,12 @@ export function runAutopilot(
         });
       }
 
-      // RULE: Hard block terminal mismatch
       if (
         rule.key === "HARD_BLOCK_TERMINAL_MISMATCH" &&
         order.status === "Paid" &&
         !order.paymentVerified
       ) {
-        queue.push({
+        pushQueueItem({
           id: `TERM-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -125,12 +129,11 @@ export function runAutopilot(
         });
       }
 
-      // RULE: Last-minute cancel -> offer waitlist
       if (
         rule.key === "LAST_MINUTE_CANCEL_WAITLIST" &&
         order.status === "Cancelled"
       ) {
-        queue.push({
+        pushQueueItem({
           id: `WAIT-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -145,12 +148,11 @@ export function runAutopilot(
         revenueSaved += order.amount;
       }
 
-      // RULE: No-show reduce reliability
       if (
         rule.key === "NO_SHOW_REDUCE_RELIABILITY" &&
         order.status === "No-show"
       ) {
-        queue.push({
+        pushQueueItem({
           id: `NOSHOW-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -162,12 +164,11 @@ export function runAutopilot(
         });
       }
 
-      // RULE: Suspicious screenshot -> fraud flag
       if (
         rule.key === "PAYMENT_SCREENSHOT_FLAG" &&
         order.suspiciousPaymentScreenshot
       ) {
-        queue.push({
+        pushQueueItem({
           id: `FRAUD-${order.id}`,
           orderId: order.id,
           customerName: order.customerName,
@@ -178,6 +179,55 @@ export function runAutopilot(
           createdAt: new Date().toISOString(),
           estimatedRevenueProtected: order.amount,
         });
+      }
+
+      if (rule.key === "TIME_BASED_REMINDER") {
+        const timeDecisions = evaluateTimeAutomation(
+          order,
+          new Date(),
+          rule.config?.reminderHoursBefore ?? 24,
+          rule.config?.unpaidReleaseMinutesBefore ?? 30
+        ).filter((d) => d.action === "SEND_REMINDER");
+
+        for (const decision of timeDecisions) {
+          pushQueueItem({
+            id: `REM-${order.id}`,
+            orderId: order.id,
+            customerName: order.customerName,
+            ruleKey: rule.key,
+            action: decision.action,
+            reason: decision.reason,
+            status: "QUEUED",
+            createdAt: new Date().toISOString(),
+            estimatedRevenueProtected: decision.estimatedRevenueProtected,
+          });
+        }
+      }
+
+      if (rule.key === "UNPAID_RELEASE_SLOT") {
+        const timeDecisions = evaluateTimeAutomation(
+          order,
+          new Date(),
+          rule.config?.reminderHoursBefore ?? 24,
+          rule.config?.unpaidReleaseMinutesBefore ?? 30
+        ).filter(
+          (d) =>
+            d.action === "RELEASE_SLOT" || d.action === "OFFER_WAITLIST"
+        );
+
+        for (const decision of timeDecisions) {
+          pushQueueItem({
+            id: `${decision.action}-${order.id}`,
+            orderId: order.id,
+            customerName: order.customerName,
+            ruleKey: rule.key,
+            action: decision.action,
+            reason: decision.reason,
+            status: "QUEUED",
+            createdAt: new Date().toISOString(),
+            estimatedRevenueProtected: decision.estimatedRevenueProtected,
+          });
+        }
       }
     }
   }
