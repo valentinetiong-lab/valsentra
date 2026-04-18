@@ -24,6 +24,8 @@ type PaymentState =
   | "SUSPICIOUS"
   | "BLOCKED";
 
+type PaymentStage = "DEPOSIT" | "FINAL";
+
 type RestaurantOrder = {
   id: string;
   customerName: string;
@@ -35,6 +37,7 @@ type RestaurantOrder = {
   itemSummary: string;
   status: OrderStatus;
   paymentState?: PaymentState;
+  paymentStage?: PaymentStage;
   paymentVerified?: boolean;
   depositRequired: boolean;
   depositAmount?: number;
@@ -79,6 +82,26 @@ function paymentBadgeClasses(state?: PaymentState) {
   return "bg-neutral-100 text-neutral-700 border-neutral-200";
 }
 
+function getAmountDueNow(order: RestaurantOrder) {
+  const depositAmount = Number(order.depositAmount ?? 0);
+
+  if (order.depositRequired && !order.depositPaid) {
+    return depositAmount;
+  }
+
+  if (order.status !== "PAID") {
+    return Math.max(order.amount - depositAmount, 0);
+  }
+
+  return 0;
+}
+
+function getPaymentStageLabel(order: RestaurantOrder) {
+  if (order.depositRequired && !order.depositPaid) return "Deposit due now";
+  if (order.status !== "PAID") return "Final balance due now";
+  return "Fully paid";
+}
+
 export default function PayOrderPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
@@ -111,10 +134,9 @@ export default function PayOrderPage() {
     }
   }, [id]);
 
-  const amountDue = useMemo(() => {
+  const amountDueNow = useMemo(() => {
     if (!order) return 0;
-    if (order.depositRequired) return order.depositAmount ?? order.amount * 0.3;
-    return order.amount;
+    return getAmountDueNow(order);
   }, [order]);
 
   async function patchOrder(updates: Partial<RestaurantOrder>) {
@@ -162,10 +184,12 @@ export default function PayOrderPage() {
   }
 
   async function handleScreenshotSubmitted() {
+    if (!order) return;
+
     const updated = await patchOrder({
       paymentState: "SCREENSHOT_SUBMITTED",
-      notes: "Customer submitted screenshot. Awaiting verification.",
-      status: order?.status === "UNPAID" ? "PAYMENT_SENT" : order?.status,
+      notes: `Customer submitted screenshot for ${getPaymentStageLabel(order).toLowerCase()}. Awaiting verification.`,
+      status: order.status === "UNPAID" ? "PAYMENT_SENT" : order.status,
     });
 
     if (updated) {
@@ -175,19 +199,58 @@ export default function PayOrderPage() {
   }
 
   async function handleSimulatePaid() {
+    if (!order) return;
+
+    if (order.depositRequired && !order.depositPaid) {
+      const remainingBalance = Math.max(
+        order.amount - Number(order.depositAmount ?? 0),
+        0
+      );
+
+      const updated = await patchOrder({
+        depositPaid: true,
+        paymentStage: "FINAL",
+        paymentState: "VERIFIED",
+        paymentVerified: remainingBalance === 0,
+        status: remainingBalance === 0 ? "PAID" : "PAYMENT_SENT",
+        protectionReason:
+          remainingBalance === 0 ? "Payment verified" : "Deposit secured",
+        notes:
+          remainingBalance === 0
+            ? "Deposit paid and order fully settled."
+            : `Deposit paid successfully. Remaining balance due: ${formatCurrency(
+                remainingBalance
+              )}`,
+      });
+
+      if (updated) {
+        await logAudit("Deposit marked paid from payment page");
+        setSuccessMessage(
+          remainingBalance === 0
+            ? "Payment fully verified."
+            : `Deposit verified. Remaining balance due: ${formatCurrency(
+                remainingBalance
+              )}`
+        );
+      }
+
+      return;
+    }
+
     const updated = await patchOrder({
       status: "PAID",
+      paymentStage: "FINAL",
       paymentState: "VERIFIED",
       paymentVerified: true,
       depositPaid: true,
       terminalMismatch: false,
       protectionReason: "Payment verified",
-      notes: "Payment marked paid from payment page.",
+      notes: "Final payment marked paid from payment page.",
     });
 
     if (updated) {
-      await logAudit("Payment marked verified from payment page");
-      setSuccessMessage("Payment verified successfully.");
+      await logAudit("Final payment marked verified from payment page");
+      setSuccessMessage("Final payment verified successfully.");
     }
   }
 
@@ -228,7 +291,7 @@ export default function PayOrderPage() {
                   Confirm Booking / Order
                 </h1>
                 <p className="mt-3 text-sm leading-6 text-neutral-600">
-                  Secure the slot by completing payment verification.
+                  Secure the slot by completing the current payment step.
                 </p>
               </div>
 
@@ -253,12 +316,17 @@ export default function PayOrderPage() {
               <InfoCard label="Type" value={getOrderTypeLabel(order.orderType)} />
               <InfoCard label="Reservation Time" value={order.reservationTime} />
               <InfoCard label="Guests" value={String(order.guests)} />
-              <InfoCard label="Amount" value={formatCurrency(order.amount)} />
+              <InfoCard label="Total Order Value" value={formatCurrency(order.amount)} />
               <InfoCard
                 label="Deposit Required"
                 value={order.depositRequired ? "Yes" : "No"}
               />
-              <InfoCard label="Amount Due Now" value={formatCurrency(amountDue)} />
+              <InfoCard
+                label="Deposit Amount"
+                value={formatCurrency(Number(order.depositAmount ?? 0))}
+              />
+              <InfoCard label="Current Step" value={getPaymentStageLabel(order)} />
+              <InfoCard label="Amount Due Now" value={formatCurrency(amountDueNow)} />
             </div>
 
             <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
@@ -278,7 +346,7 @@ export default function PayOrderPage() {
           <section className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
             <h2 className="text-2xl font-semibold tracking-tight">Payment Actions</h2>
             <p className="mt-2 text-sm text-neutral-600">
-              This page simulates the payment verification workflow using your real order record.
+              This page now handles the correct amount for the current payment step instead of always treating everything as full payment.
             </p>
 
             <div className="mt-5 flex flex-col gap-3 md:flex-row">
@@ -292,10 +360,10 @@ export default function PayOrderPage() {
 
               <button
                 onClick={handleSimulatePaid}
-                disabled={saving}
+                disabled={saving || amountDueNow <= 0}
                 className="rounded-2xl bg-green-600 px-5 py-3 text-sm font-medium text-white disabled:opacity-50"
               >
-                {saving ? "Saving..." : "Simulate Verified Payment"}
+                {saving ? "Saving..." : `Simulate Payment of ${formatCurrency(amountDueNow)}`}
               </button>
 
               <Link

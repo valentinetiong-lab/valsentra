@@ -7,8 +7,8 @@ import type { RestaurantOrder as AutopilotOrder } from "../types/autopilot";
 import { applyReliabilityEvent } from "../lib/reliabilityEngine";
 import { calculateDepositDecision } from "../lib/depositEngine";
 import { findBestWaitlistLead } from "../lib/waitlistEngine";
+import type { PaymentState } from "../lib/paymentVerificationEngine";
 import {
-  PaymentState,
   sendPaymentLinkTransition,
   submitScreenshotTransition,
   verifyPaymentAmount,
@@ -27,6 +27,7 @@ type OrderType =
   | "DELIVERY_PREORDER";
 
 type RiskLevel = "LOW" | "MED" | "HIGH";
+type PaymentStage = "DEPOSIT" | "FINAL";
 
 type RestaurantOrder = {
   id: string;
@@ -39,6 +40,7 @@ type RestaurantOrder = {
   itemSummary: string;
   status: OrderStatus;
   paymentState?: PaymentState;
+  paymentStage?: PaymentStage;
   paymentVerified?: boolean;
   depositRequired: boolean;
   depositAmount: number;
@@ -50,6 +52,7 @@ type RestaurantOrder = {
   riskLevel?: RiskLevel;
   protectionReason?: string;
   createdAt?: string;
+  recoverySourceOrderId?: string;
 };
 
 type RestaurantSettings = {
@@ -111,10 +114,12 @@ function statusBadgeClasses(status: OrderStatus) {
 function paymentBadgeClasses(state?: PaymentState) {
   if (state === "VERIFIED") return "bg-green-100 text-green-700 border-green-200";
   if (state === "LINK_SENT") return "bg-blue-100 text-blue-700 border-blue-200";
-  if (state === "SCREENSHOT_SUBMITTED")
+  if (state === "SCREENSHOT_SUBMITTED") {
     return "bg-yellow-100 text-yellow-700 border-yellow-200";
-  if (state === "SUSPICIOUS" || state === "BLOCKED")
+  }
+  if (state === "SUSPICIOUS" || state === "BLOCKED") {
     return "bg-red-100 text-red-700 border-red-200";
+  }
   return "bg-neutral-100 text-neutral-700 border-neutral-200";
 }
 
@@ -161,6 +166,41 @@ function getStaffAutopilotTime(value?: string) {
   }
 
   return parsed.toTimeString().slice(0, 5);
+}
+
+function getEffectiveDepositAmount(order: RestaurantOrder) {
+  const totalAmount = Number(order.amount ?? 0);
+  const rawDepositAmount = Number(order.depositAmount ?? 0);
+
+  if (rawDepositAmount > 0) return rawDepositAmount;
+  if (order.depositRequired) {
+    return Math.round(totalAmount * 0.3 * 100) / 100;
+  }
+
+  return 0;
+}
+
+function getAmountDueNow(order: RestaurantOrder) {
+  const totalAmount = Number(order.amount ?? 0);
+  const effectiveDepositAmount = getEffectiveDepositAmount(order);
+
+  if (order.status === "PAID") return 0;
+
+  if (order.depositRequired && !order.depositPaid) {
+    return effectiveDepositAmount;
+  }
+
+  if (order.depositRequired && order.depositPaid) {
+    return Math.max(totalAmount - effectiveDepositAmount, 0);
+  }
+
+  return totalAmount;
+}
+
+function getPaymentStageLabel(order: RestaurantOrder) {
+  if (order.status === "PAID") return "Fully paid";
+  if (order.depositRequired && !order.depositPaid) return "Deposit due";
+  return "Final balance due";
 }
 
 export default function RestaurantStaffPage() {
@@ -266,6 +306,7 @@ export default function RestaurantStaffPage() {
     if (input.terminalMismatch) return "Terminal mismatch";
     if (isBlacklisted(input.reliabilityScore)) return "Blacklisted customer";
     if (input.reliabilityScore <= 20) return "Very low reliability";
+
     if (
       input.orderType === "DINE_IN_RESERVATION" &&
       settings &&
@@ -273,6 +314,7 @@ export default function RestaurantStaffPage() {
     ) {
       return "Large dine-in booking";
     }
+
     if (
       input.orderType === "PREORDER_PICKUP" &&
       settings &&
@@ -280,7 +322,9 @@ export default function RestaurantStaffPage() {
     ) {
       return "High-value pickup";
     }
+
     if (input.depositRequired) return "Deposit required";
+
     return "Standard protection";
   }
 
@@ -288,9 +332,10 @@ export default function RestaurantStaffPage() {
     if (order.status === "PAID") return false;
     if (order.status === "CANCELLED" || order.status === "NO_SHOW") return false;
     if (order.terminalMismatch) return true;
-    if (order.paymentState === "BLOCKED" || order.paymentState === "SUSPICIOUS")
+    if (order.paymentState === "BLOCKED" || order.paymentState === "SUSPICIOUS") {
       return true;
-    if (order.depositRequired && !order.depositPaid) return true;
+    }
+    if (getAmountDueNow(order) > 0) return true;
     if (isBlacklisted(order.reliabilityScore)) return true;
     return false;
   }
@@ -300,6 +345,7 @@ export default function RestaurantStaffPage() {
     if (order.status === "CANCELLED") return "Cancelled";
     if (order.status === "NO_SHOW") return "Lost";
     if (isBlacklisted(order.reliabilityScore)) return "Blacklisted";
+    if (order.depositRequired && order.depositPaid) return "Deposit secured";
     if (isBlocked(order)) return "Blocked until verified";
     if (order.status === "PAYMENT_SENT") return "Waiting payment";
     return "Unprotected";
@@ -307,14 +353,17 @@ export default function RestaurantStaffPage() {
 
   function getProtectionTone(order: RestaurantOrder) {
     if (order.status === "PAID") return "text-green-700";
-    if (order.status === "CANCELLED" || order.status === "NO_SHOW") return "text-neutral-700";
+    if (order.status === "CANCELLED" || order.status === "NO_SHOW") {
+      return "text-neutral-700";
+    }
+    if (order.depositRequired && order.depositPaid) return "text-blue-700";
     if (isBlocked(order)) return "text-red-700";
     if (order.status === "PAYMENT_SENT") return "text-yellow-700";
     return "text-neutral-700";
   }
 
   function getBestWaitlistLead(order: RestaurantOrder) {
-    const result = findBestWaitlistLead(
+    return findBestWaitlistLead(
       {
         id: order.id,
         orderType: order.orderType,
@@ -322,8 +371,6 @@ export default function RestaurantStaffPage() {
       },
       waitlist
     );
-
-    return result;
   }
 
   async function patchOrder(id: string, updates: Partial<RestaurantOrder>) {
@@ -364,51 +411,29 @@ export default function RestaurantStaffPage() {
     setSaving(true);
 
     try {
-      const depositDecision = calculateDepositDecision({
-        orderType: originalOrder.orderType,
-        guests: originalOrder.guests,
-        amount: originalOrder.amount,
-        reliabilityScore: lead.reliabilityScore,
-        dineInDepositGuestsThreshold: settings.dineInDepositGuestsThreshold,
-        pickupDepositAmountThreshold: settings.pickupDepositAmountThreshold,
-        requireDeliveryDeposit: settings.requireDeliveryDeposit,
-        lowReliabilityThreshold: settings.lowReliabilityThreshold,
-      });
-
-      const riskLevel = getRiskLevel({
-        amount: originalOrder.amount,
-        guests: originalOrder.guests,
-        reliabilityScore: lead.reliabilityScore,
-        terminalMismatch: false,
-        status: "UNPAID",
-        orderType: originalOrder.orderType,
-      });
-
-      const protectionReason = depositDecision.required
-        ? `Recovered from waitlist • ${depositDecision.reason}`
-        : "Recovered from waitlist";
-
       const replacementOrder: RestaurantOrder = {
         id: `ORD-${Date.now().toString().slice(-6)}`,
         customerName: lead.customerName,
         phone: lead.phone,
         orderType: originalOrder.orderType,
-        amount: originalOrder.amount,
+        amount: 0,
         guests: originalOrder.guests,
         reservationTime: originalOrder.reservationTime,
-        itemSummary: `Recovered from ${originalOrder.id} • ${originalOrder.itemSummary}`,
+        itemSummary: `Recovered slot from ${originalOrder.id} • Awaiting actual order details`,
         status: "UNPAID",
         paymentState: "PENDING",
+        paymentStage: "FINAL",
         paymentVerified: false,
-        depositRequired: depositDecision.required,
-        depositAmount: depositDecision.depositAmount,
+        depositRequired: false,
+        depositAmount: 0,
         depositPaid: false,
         reliabilityScore: lead.reliabilityScore,
         terminalMismatch: false,
-        notes: `Waitlist recovery from ${originalOrder.id}.`,
+        notes: `Recovered from ${originalOrder.id}. Customer accepted slot, but actual order value/details still need to be entered.`,
         assignedStaff: "Recovery",
-        riskLevel,
-        protectionReason,
+        riskLevel: "LOW",
+        protectionReason: "Recovered slot • awaiting actual order details",
+        recoverySourceOrderId: originalOrder.id,
       };
 
       const res = await fetch("/api/orders", {
@@ -429,16 +454,16 @@ export default function RestaurantStaffPage() {
       setOrders((prev) => [data, ...prev]);
 
       await patchOrder(originalOrder.id, {
-        notes: `${originalOrder.notes} | Waitlist recovered by ${lead.customerName}.`,
+        notes: `${originalOrder.notes} | Waitlist slot accepted by ${lead.customerName}. Replacement order created as draft.`,
       });
 
       await logAudit(
-        `Recovered slot ${originalOrder.id} with waitlist lead ${lead.customerName}`,
+        `Recovered slot ${originalOrder.id} with waitlist lead ${lead.customerName}. Draft replacement order created.`,
         "Staff",
         data.id
       );
 
-      alert(`Recovered slot with ${lead.customerName}. New order created.`);
+      alert(`Recovered slot with ${lead.customerName}. Draft replacement order created.`);
     } finally {
       setSaving(false);
     }
@@ -528,8 +553,15 @@ export default function RestaurantStaffPage() {
     const target = orders.find((o) => o.id === orderId);
     if (!target) return;
 
+    const expectedAmount = getAmountDueNow(target);
+
+    if (expectedAmount <= 0) {
+      alert("There is no payment due for this order right now.");
+      return;
+    }
+
     const input = window.prompt(
-      `Enter terminal amount received for ${orderId}.\nExpected: ${target.amount}`
+      `Enter terminal amount received for ${orderId}.\nExpected now: ${expectedAmount}`
     );
 
     if (input === null) return;
@@ -541,7 +573,7 @@ export default function RestaurantStaffPage() {
       return;
     }
 
-    const verification = verifyPaymentAmount(target.amount, enteredAmount);
+    const verification = verifyPaymentAmount(expectedAmount, enteredAmount);
 
     const nextReliability = verification.reliabilityEvent
       ? applyReliabilityEvent(target.reliabilityScore, verification.reliabilityEvent)
@@ -552,37 +584,96 @@ export default function RestaurantStaffPage() {
       guests: target.guests,
       reliabilityScore: nextReliability,
       terminalMismatch: verification.terminalMismatch,
-      status: verification.paymentVerified ? "PAID" : target.status,
+      status: target.status,
       orderType: target.orderType,
     });
 
+    if (!verification.paymentVerified) {
+      const updated = await patchOrder(orderId, {
+        paymentState: verification.paymentState,
+        paymentVerified: false,
+        terminalMismatch: verification.terminalMismatch,
+        reliabilityScore: nextReliability,
+        riskLevel: nextRisk,
+        protectionReason: "Terminal mismatch",
+        notes: verification.reason,
+      });
+
+      if (updated) {
+        await logAudit(verification.reason, "Staff", orderId);
+      }
+
+      alert(verification.reason);
+      return;
+    }
+
+    if (target.depositRequired && !target.depositPaid) {
+      const remainingBalance = Math.max(
+        target.amount - getEffectiveDepositAmount(target),
+        0
+      );
+
+      const updated = await patchOrder(orderId, {
+        status: remainingBalance > 0 ? "PAYMENT_SENT" : "PAID",
+        paymentStage: "FINAL",
+        paymentState: "VERIFIED",
+        paymentVerified: remainingBalance === 0,
+        depositPaid: true,
+        terminalMismatch: false,
+        reliabilityScore: nextReliability,
+        riskLevel: remainingBalance === 0 ? "LOW" : (target.riskLevel ?? "LOW"),
+        protectionReason:
+          remainingBalance > 0 ? "Deposit secured" : "Payment verified",
+        notes:
+          remainingBalance > 0
+            ? `Deposit verified successfully. Remaining balance due: ${formatCurrency(
+                remainingBalance
+              )}`
+            : "Deposit verified and order fully paid.",
+      });
+
+      if (updated) {
+        await logAudit("Deposit verified successfully", "Staff", orderId);
+      }
+
+      alert(
+        remainingBalance > 0
+          ? `Deposit verified. Remaining balance: ${formatCurrency(remainingBalance)}`
+          : "Payment verified successfully."
+      );
+      return;
+    }
+
     const updated = await patchOrder(orderId, {
-      status: verification.paymentVerified ? "PAID" : target.status,
-      paymentState: verification.paymentState,
-      paymentVerified: verification.paymentVerified,
-      depositPaid: verification.paymentVerified ? true : target.depositPaid,
-      terminalMismatch: verification.terminalMismatch,
+      status: "PAID",
+      paymentStage: "FINAL",
+      paymentState: "VERIFIED",
+      paymentVerified: true,
+      depositPaid: true,
+      terminalMismatch: false,
       reliabilityScore: nextReliability,
-      riskLevel: verification.paymentVerified ? "LOW" : nextRisk,
-      protectionReason: verification.paymentVerified
-        ? "Payment verified"
-        : "Terminal mismatch",
-      notes: verification.reason,
+      riskLevel: "LOW",
+      protectionReason: "Payment verified",
+      notes: "Final payment verified successfully.",
     });
 
     if (updated) {
-      await logAudit(verification.reason, "Staff", orderId);
+      await logAudit("Final payment verified successfully", "Staff", orderId);
     }
 
-    alert(verification.reason);
+    alert("Final payment verified successfully.");
   }
 
   async function sendPaymentLink(order: RestaurantOrder) {
+    const amountDueNow = getAmountDueNow(order);
+
     const updated = await patchOrder(order.id, {
       status: "PAYMENT_SENT",
+      paymentStage:
+        order.depositRequired && !order.depositPaid ? "DEPOSIT" : "FINAL",
       paymentState: sendPaymentLinkTransition(),
-      notes: `Payment link sent to customer. Deposit due: ${formatCurrency(
-        order.depositAmount || order.amount * 0.3
+      notes: `Payment link sent. ${getPaymentStageLabel(order)}: ${formatCurrency(
+        amountDueNow
       )}`,
     });
 
@@ -598,7 +689,7 @@ export default function RestaurantStaffPage() {
 
     const updated = await patchOrder(orderId, {
       paymentState: submitScreenshotTransition(),
-      notes: "Customer submitted screenshot. Manual verification required.",
+      notes: `Customer submitted screenshot for ${getPaymentStageLabel(target).toLowerCase()}. Manual verification required.`,
     });
 
     if (updated) {
@@ -668,9 +759,10 @@ export default function RestaurantStaffPage() {
       itemSummary: quickAdd.itemSummary || "New order",
       status: "UNPAID",
       paymentState: "PENDING",
+      paymentStage: depositRequired ? "DEPOSIT" : "FINAL",
       paymentVerified: false,
       depositRequired,
-      depositAmount: depositDecision.depositAmount,
+      depositAmount: Number(depositDecision.depositAmount ?? 0),
       depositPaid: false,
       reliabilityScore,
       terminalMismatch: false,
@@ -720,12 +812,15 @@ export default function RestaurantStaffPage() {
 
   const metrics = useMemo(() => {
     const revenueProtected = orders
-      .filter((o) => o.status === "PAID")
-      .reduce((sum, o) => sum + o.amount, 0);
+      .filter((o) => o.status === "PAID" || (o.depositRequired && o.depositPaid))
+      .reduce((sum, o) => {
+        if (o.status === "PAID") return sum + o.amount;
+        return sum + getEffectiveDepositAmount(o);
+      }, 0);
 
     const revenueAtRisk = orders
       .filter((o) => o.status === "UNPAID" || o.status === "PAYMENT_SENT")
-      .reduce((sum, o) => sum + o.amount, 0);
+      .reduce((sum, o) => sum + getAmountDueNow(o), 0);
 
     const blockedOrders = orders.filter((o) => isBlocked(o)).length;
 
@@ -746,7 +841,7 @@ export default function RestaurantStaffPage() {
       customerName: order.customerName,
       date: getStaffAutopilotDate(order.reservationTime),
       time: getStaffAutopilotTime(order.reservationTime),
-      amount: order.amount,
+      amount: getAmountDueNow(order),
       status: mapStaffStatusToAutopilotStatus(order.status),
       risk: (order.riskLevel ?? "LOW") as "LOW" | "MED" | "HIGH",
       orderType: mapStaffOrderTypeToAutopilotType(order.orderType),
@@ -761,7 +856,7 @@ export default function RestaurantStaffPage() {
         order.terminalMismatch,
       blocked: isBlocked(order),
     }));
-  }, [orders, settings]);
+  }, [orders]);
 
   useEffect(() => {
     evaluateOrders(autopilotOrders);
@@ -811,12 +906,12 @@ export default function RestaurantStaffPage() {
             <TopCard
               title="Revenue Protected"
               value={formatCurrency(metrics.revenueProtected)}
-              subtitle="Already secured"
+              subtitle="Deposits and paid revenue secured"
             />
             <TopCard
               title="Revenue At Risk"
               value={formatCurrency(metrics.revenueAtRisk)}
-              subtitle="Still exposed"
+              subtitle="What is still due now"
             />
             <TopCard
               title="Blocked Orders"
@@ -954,12 +1049,44 @@ export default function RestaurantStaffPage() {
                         </div>
 
                         <div className="mt-4 grid gap-2 text-sm text-neutral-700 md:grid-cols-2">
-                          <p><span className="font-medium text-neutral-900">Time:</span> {order.reservationTime}</p>
-                          <p><span className="font-medium text-neutral-900">Amount:</span> {formatCurrency(order.amount)}</p>
-                          <p><span className="font-medium text-neutral-900">Type:</span> {getOrderTypeLabel(order.orderType)}</p>
-                          <p><span className="font-medium text-neutral-900">Reliability:</span> {order.reliabilityScore}%</p>
-                          <p><span className="font-medium text-neutral-900">Deposit:</span> {order.depositRequired ? formatCurrency(order.depositAmount) : "Not required"}</p>
-                          <p><span className="font-medium text-neutral-900">Verified:</span> {order.paymentVerified ? "Yes" : "No"}</p>
+                          <p>
+                            <span className="font-medium text-neutral-900">Time:</span>{" "}
+                            {order.reservationTime}
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">Type:</span>{" "}
+                            {getOrderTypeLabel(order.orderType)}
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">Total amount:</span>{" "}
+                            {formatCurrency(order.amount)}
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">
+                              Deposit amount:
+                            </span>{" "}
+                            {formatCurrency(getEffectiveDepositAmount(order))}
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">Due now:</span>{" "}
+                            {formatCurrency(getAmountDueNow(order))}
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">
+                              Payment step:
+                            </span>{" "}
+                            {getPaymentStageLabel(order)}
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">
+                              Reliability:
+                            </span>{" "}
+                            {order.reliabilityScore}%
+                          </p>
+                          <p>
+                            <span className="font-medium text-neutral-900">Verified:</span>{" "}
+                            {order.paymentVerified ? "Yes" : "No"}
+                          </p>
                         </div>
 
                         <div className="mt-4 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
@@ -982,7 +1109,7 @@ export default function RestaurantStaffPage() {
 
                         {blocked && !order.terminalMismatch && (
                           <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4 text-sm text-red-700">
-                            Do not prepare or release until payment is verified.
+                            Do not prepare or release until the current payment step is verified.
                           </div>
                         )}
                       </div>
@@ -1096,31 +1223,49 @@ export default function RestaurantStaffPage() {
                           </div>
 
                           <div className="mt-3 space-y-1 text-sm text-neutral-700">
-                            <p><span className="font-medium text-neutral-900">Amount:</span> {formatCurrency(order.amount)}</p>
-                            <p><span className="font-medium text-neutral-900">Type:</span> {getOrderTypeLabel(order.orderType)}</p>
                             <p>
-                              <span className="font-medium text-neutral-900">Recovery:</span>{" "}
-                              {bestLead ? `Offer to ${bestLead.customerName}` : "No suitable waitlist lead"}
+                              <span className="font-medium text-neutral-900">
+                                Cancelled order value:
+                              </span>{" "}
+                              {formatCurrency(order.amount)}
                             </p>
                             <p>
-                              <span className="font-medium text-neutral-900">Recovery score:</span>{" "}
+                              <span className="font-medium text-neutral-900">Type:</span>{" "}
+                              {getOrderTypeLabel(order.orderType)}
+                            </p>
+                            <p>
+                              <span className="font-medium text-neutral-900">Recovery:</span>{" "}
+                              {bestLead
+                                ? `Offer slot to ${bestLead.customerName}`
+                                : "No suitable waitlist lead"}
+                            </p>
+                            <p>
+                              <span className="font-medium text-neutral-900">
+                                Recovery score:
+                              </span>{" "}
                               {recovery.recoveryScore}
                             </p>
                             <p>
-                              <span className="font-medium text-neutral-900">Recoverable revenue:</span>{" "}
+                              <span className="font-medium text-neutral-900">
+                                Opportunity value:
+                              </span>{" "}
                               {formatCurrency(recovery.recoverableRevenue)}
+                            </p>
+                            <p className="text-neutral-500">
+                              Replacement orders are created as drafts. Staff must enter
+                              the new customer’s real order value later.
                             </p>
                           </div>
                         </div>
 
                         {bestLead && (
-                          <div className="flex flex-col gap-2 md:w-[240px]">
+                          <div className="flex flex-col gap-2 md:w-[260px]">
                             <a
                               href={buildWhatsAppLink(
                                 bestLead.phone,
                                 `Hi ${bestLead.customerName}, we just opened a ${getOrderTypeLabel(
                                   order.orderType
-                                )} slot/order. Would you like it?`
+                                )} slot. Would you like it? We will confirm your actual order details after you reply.`
                               )}
                               target="_blank"
                               rel="noreferrer"

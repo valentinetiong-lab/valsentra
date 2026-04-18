@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import AutopilotQueuePanel from "../../components/AutopilotQueuePanel";
 import { useAutopilotStore } from "../../store/autopilotStore";
 import type { RestaurantOrder as AutopilotOrder } from "../../types/autopilot";
-
+import IntelligenceDashboard from "@/app/components/IntelligenceDashboard";
 type OrderStatus =
   | "UNPAID"
   | "PAYMENT_SENT"
@@ -185,6 +185,7 @@ export default function RestaurantOwnerPage() {
 
     boot();
   }, []);
+
 
   async function loadOrders() {
     const res = await fetch("/api/orders", { cache: "no-store" });
@@ -497,6 +498,8 @@ export default function RestaurantOwnerPage() {
               subtitle="Current defense quality"
             />
           </section>
+
+<IntelligenceDashboard />
 
           <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
             <div className="rounded-[28px] border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
